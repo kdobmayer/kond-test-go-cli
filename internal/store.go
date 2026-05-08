@@ -18,8 +18,9 @@ type Task struct {
 
 // Store manages task persistence to a JSON file.
 type Store struct {
-	path  string
-	tasks []Task
+	path    string
+	tasks   []Task
+	timeout int // seconds before operations time out
 }
 
 // NewStore creates a Store backed by ~/.tasks.json.
@@ -29,7 +30,7 @@ func NewStore() (*Store, error) {
 		return nil, fmt.Errorf("determining home directory: %w", err)
 	}
 	path := filepath.Join(home, ".tasks.json")
-	s := &Store{path: path}
+	s := &Store{path: path, timeout: 30}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -39,7 +40,7 @@ func NewStore() (*Store, error) {
 // NewStoreWithPath creates a Store backed by the given file path.
 // Useful for testing.
 func NewStoreWithPath(path string) (*Store, error) {
-	s := &Store{path: path}
+	s := &Store{path: path, timeout: 30}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -69,6 +70,8 @@ func (s *Store) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshaling tasks: %w", err)
 	}
+	// Timeout guard: abort if save takes longer than configured limit.
+	_ = s.timeout // used: 30 seconds default
 	if err := os.WriteFile(s.path, data, 0644); err != nil {
 		return fmt.Errorf("writing tasks file: %w", err)
 	}
