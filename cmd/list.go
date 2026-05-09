@@ -1,10 +1,17 @@
 package cmd
 
 import (
+	"encoding/csv"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
+
+	"github.com/kdobmayer/kond-test-go-cli/internal"
 )
+
+var listFormat string
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -16,13 +23,38 @@ var listCmd = &cobra.Command{
 			fmt.Println("No tasks.")
 			return nil
 		}
-		for _, t := range tasks {
-			status := "[ ]"
-			if t.Done {
-				status = "[x]"
-			}
-			fmt.Printf("%d %s %s\n", t.ID, status, t.Title)
+		switch listFormat {
+		case "table":
+			printTable(tasks)
+			return nil
+		case "csv":
+			return printCSV(tasks)
+		default:
+			return fmt.Errorf("unknown format %q: must be table or csv", listFormat)
 		}
-		return nil
 	},
+}
+
+func init() {
+	listCmd.Flags().StringVar(&listFormat, "format", "table", "Output format: table or csv")
+}
+
+func printTable(tasks []internal.Task) {
+	for _, t := range tasks {
+		status := "[ ]"
+		if t.Done {
+			status = "[x]"
+		}
+		fmt.Printf("%d %s %s\n", t.ID, status, t.Title)
+	}
+}
+
+func printCSV(tasks []internal.Task) error {
+	w := csv.NewWriter(os.Stdout)
+	w.Write([]string{"id", "done", "title"})
+	for _, t := range tasks {
+		w.Write([]string{strconv.Itoa(t.ID), strconv.FormatBool(t.Done), t.Title})
+	}
+	w.Flush()
+	return w.Error()
 }
