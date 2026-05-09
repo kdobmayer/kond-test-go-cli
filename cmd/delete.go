@@ -23,6 +23,7 @@ var deleteCmd = &cobra.Command{
 		if err := store.Save(); err != nil {
 			return fmt.Errorf("saving tasks: %w", err)
 		}
+		invalidateListCache()
 		fmt.Printf("Task %d deleted.\n", id)
 		return nil
 	},

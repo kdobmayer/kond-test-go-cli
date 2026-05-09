@@ -18,6 +18,7 @@ var addCmd = &cobra.Command{
 		if err := store.Save(); err != nil {
 			return fmt.Errorf("saving tasks: %w", err)
 		}
+		invalidateListCache()
 		fmt.Printf("Added task %d: %s\n", task.ID, task.Title)
 		return nil
 	},

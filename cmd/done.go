@@ -23,6 +23,7 @@ var doneCmd = &cobra.Command{
 		if err := store.Save(); err != nil {
 			return fmt.Errorf("saving tasks: %w", err)
 		}
+		invalidateListCache()
 		fmt.Printf("Task %d marked as done.\n", id)
 		return nil
 	},
