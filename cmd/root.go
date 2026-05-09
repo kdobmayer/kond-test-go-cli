@@ -1,3 +1,4 @@
+// deterministic reconcile v2 test
 // Package cmd implements the CLI commands for the TODO task manager.
 package cmd
 
