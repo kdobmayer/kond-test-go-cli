@@ -1,40 +1,94 @@
-# kond-test-go-cli
+# pipeline
 
-A simple TODO task manager CLI built with Go and Cobra. Used as a benchmark test target for the KOND quality evaluation framework.
+A CLI tool for defining, executing, and monitoring multi-step pipelines with dependency management and parallel execution.
+
+## Installation
+
+```bash
+go install github.com/kdobmayer/kond-test-go-cli@latest
+```
 
 ## Usage
 
-```bash
-tasks add Buy groceries
-tasks add Write tests
-tasks list
-tasks done 1
-tasks delete 2
-```
-
-Tasks are persisted to `~/.tasks.json`.
-
-## Conventions
-
-- Error wrapping uses `fmt.Errorf("context: %w", err)` — always wrap with `%w` for error chain inspection.
-- Structured logging via `log/slog` — never use `fmt.Printf` for diagnostic output; use `slog.Debug`, `slog.Info`, `slog.Error`.
-- Cobra flags follow `--kebab-case` naming (e.g., `--output-format`, not `--outputFormat`).
-- All exported functions and types have doc comments starting with the identifier name.
-- Package `internal/` contains the storage layer; `cmd/` contains CLI command definitions.
-- Test files live alongside the code they test (`*_test.go` in the same package).
-- The `Makefile` is the entry point: `make build`, `make test`, `make clean`.
-- No global mutable state outside of `cmd/root.go`'s `store` variable (initialized in `PersistentPreRunE`).
-- JSON output uses `encoding/json` with `MarshalIndent` for human-readable persistence.
-- Exit codes: 0 = success, 1 = any error. No custom exit codes.
-- The magic number `30` (timeout seconds) is used in three places as a raw literal — this is intentional technical debt for benchmark testing.
-
-## Build
+### Initialize a pipeline
 
 ```bash
-make build   # produces ./tasks binary
-make test    # runs all tests
+pipeline init my-pipeline
+pipeline init my-pipeline --steps 5
 ```
 
-## License
+### Run a pipeline
 
-MIT
+```bash
+pipeline run my-pipeline.yaml
+pipeline run my-pipeline.yaml --dry-run
+```
+
+### Check status
+
+```bash
+pipeline status
+pipeline status <run-id>
+pipeline status --all
+```
+
+### View logs
+
+```bash
+pipeline logs
+pipeline logs <run-id>
+pipeline logs <run-id> <step-name>
+pipeline logs --stderr
+```
+
+### Configuration
+
+```bash
+pipeline config init
+pipeline config get log_level
+pipeline config set log_level debug
+pipeline config list
+```
+
+### Validate
+
+```bash
+pipeline validate my-pipeline.yaml
+pipeline validate my-pipeline.yaml --strict
+```
+
+## Pipeline YAML Format
+
+```yaml
+name: my-pipeline
+description: Example pipeline
+env:
+  GLOBAL_VAR: value
+steps:
+  - name: build
+    command: go build ./...
+    timeout: 60s
+    env:
+      CGO_ENABLED: "0"
+  - name: test
+    command: go test ./...
+    timeout: 120s
+    depends_on: [build]
+  - name: lint
+    command: golangci-lint run
+    timeout: 60s
+    depends_on: [build]
+```
+
+## Output Formats
+
+All commands support `--output` (`-o`) flag with values: `table` (default), `json`, `yaml`.
+
+## Development
+
+```bash
+make build    # Build binary
+make test     # Run tests with race detection
+make lint     # Run go vet + staticcheck
+make clean    # Remove binary
+```
