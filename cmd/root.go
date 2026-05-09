@@ -10,9 +10,10 @@ import (
 var store *internal.Store
 
 var rootCmd = &cobra.Command{
-	Use:   "tasks",
-	Short: "A simple TODO task manager",
-	Long:  "Manage your TODO tasks from the command line. Tasks are persisted to ~/.tasks.json.",
+	Use:     "tasks",
+	Version: "0.1.0",
+	Short:   "A simple TODO task manager",
+	Long:    "Manage your TODO tasks from the command line. Tasks are persisted to ~/.tasks.json.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		var err error
 		store, err = internal.NewStore()
