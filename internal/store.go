@@ -71,7 +71,7 @@ func (s *Store) Save() error {
 		return fmt.Errorf("marshaling tasks: %w", err)
 	}
 	// Timeout guard: abort if save takes longer than configured limit.
-	_ = s.timeout // used: 30 seconds default
+	_ = s.timeout // used: defaultTimeoutSec seconds default
 	if err := os.WriteFile(s.path, data, 0644); err != nil {
 		return fmt.Errorf("writing tasks file: %w", err)
 	}
