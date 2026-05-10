@@ -24,6 +24,10 @@ func init() {
 	runCmd.Flags().Bool("verbose", false, "Show step output in real-time")
 }
 
+// runPipeline loads and validates the YAML pipeline file at args[0], computes a
+// dependency-ordered execution plan via topological sort, and either prints that
+// plan (--dry-run) or executes all steps, rendering a per-step result table and
+// returning a non-nil error if any step fails.
 func runPipeline(cmd *cobra.Command, args []string) error {
 	pipelineFile := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
