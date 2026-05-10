@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -143,5 +144,64 @@ func TestGenerateTemplateSteps(t *testing.T) {
 	}
 	if len(steps[2].DependsOn) != 1 || steps[2].DependsOn[0] != "step-2" {
 		t.Error("step-3 should depend on step-2")
+	}
+}
+
+func TestSearchCommand_Match(t *testing.T) {
+	rootCmd.SetArgs([]string{"search", "--pattern", "foo"})
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetIn(strings.NewReader("foo bar\nbaz\nfoo again\n"))
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("search command error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "1: foo bar") {
+		t.Errorf("expected line 1 match, got: %s", got)
+	}
+	if !strings.Contains(got, "3: foo again") {
+		t.Errorf("expected line 3 match, got: %s", got)
+	}
+	if strings.Contains(got, "baz") {
+		t.Errorf("non-matching line should not appear, got: %s", got)
+	}
+}
+
+func TestSearchCommand_InvalidRegex(t *testing.T) {
+	rootCmd.SetArgs([]string{"search", "--pattern", "["})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+	rootCmd.SetIn(strings.NewReader("anything\n"))
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid regex")
+	}
+	if !strings.Contains(err.Error(), "invalid regex pattern") {
+		t.Errorf("error should mention 'invalid regex pattern', got: %v", err)
+	}
+}
+
+func TestSearchCommand_MissingPattern(t *testing.T) {
+	// Reset flag state that may be polluted by prior tests sharing rootCmd.
+	searchPattern = ""
+	if f := searchCmd.Flags().Lookup("pattern"); f != nil {
+		f.Changed = false
+	}
+
+	rootCmd.SetArgs([]string{"search"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --pattern flag is missing")
+	}
+	if !strings.Contains(err.Error(), `required flag(s) "pattern" not set`) {
+		t.Errorf("error should mention required flag, got: %v", err)
 	}
 }
