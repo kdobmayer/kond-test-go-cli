@@ -1,15 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
-	"text/tabwriter"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
+	"github.com/kdobmayer/kond-test-go-cli/output"
 	"github.com/kdobmayer/kond-test-go-cli/pipeline"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var logsCmd = &cobra.Command{
@@ -73,19 +71,14 @@ func runLogs(cmd *cobra.Command, args []string) error {
 }
 
 func renderStepLog(cmd *cobra.Command, log *pipeline.StepLog, showStdout, showStderr bool) error {
-	// NOTE: duplicated output formatting (intentional rough edge — same pattern in status cmd)
+	data := buildLogOutput(log, showStdout, showStderr)
+	formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
+
 	switch outputFormat {
 	case "json":
-		data := buildLogOutput(log, showStdout, showStderr)
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(data)
+		return formatter.JSON(data)
 	case "yaml":
-		data := buildLogOutput(log, showStdout, showStderr)
-		enc := yaml.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent(2)
-		defer enc.Close()
-		return enc.Encode(data)
+		return formatter.YAML(data)
 	default:
 		fmt.Fprintf(cmd.OutOrStdout(), "=== Step: %s ===\n", log.StepName)
 		if !showStderr {
@@ -100,47 +93,27 @@ func renderStepLog(cmd *cobra.Command, log *pipeline.StepLog, showStdout, showSt
 }
 
 func renderAllLogs(cmd *cobra.Command, runDir, runID string, run *pipeline.PipelineRun, showStdout, showStderr bool) error {
-	// NOTE: duplicated output formatting (intentional rough edge)
-	switch outputFormat {
-	case "json":
-		var logs []interface{}
-		for _, s := range run.Steps {
-			log, err := pipeline.LoadStepLog(runDir, runID, s.Name)
-			if err != nil {
-				continue
-			}
-			logs = append(logs, buildLogOutput(log, showStdout, showStderr))
+	formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
+
+	headers := []string{"STEP", "STDOUT (bytes)", "STDERR (bytes)"}
+	var rows []output.TableRow
+	var logData []interface{}
+
+	for _, s := range run.Steps {
+		log, err := pipeline.LoadStepLog(runDir, runID, s.Name)
+		if err != nil {
+			rows = append(rows, output.TableRow{Columns: []string{s.Name, "-", "-"}})
+			continue
 		}
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(logs)
-	case "yaml":
-		var logs []interface{}
-		for _, s := range run.Steps {
-			log, err := pipeline.LoadStepLog(runDir, runID, s.Name)
-			if err != nil {
-				continue
-			}
-			logs = append(logs, buildLogOutput(log, showStdout, showStderr))
-		}
-		enc := yaml.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent(2)
-		defer enc.Close()
-		return enc.Encode(logs)
-	default:
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "STEP\tSTDOUT (bytes)\tSTDERR (bytes)")
-		fmt.Fprintln(w, "----\t--------------\t--------------")
-		for _, s := range run.Steps {
-			log, err := pipeline.LoadStepLog(runDir, runID, s.Name)
-			if err != nil {
-				fmt.Fprintf(w, "%s\t-\t-\n", s.Name)
-				continue
-			}
-			fmt.Fprintf(w, "%s\t%d\t%d\n", s.Name, len(log.Stdout), len(log.Stderr))
-		}
-		return w.Flush()
+		logData = append(logData, buildLogOutput(log, showStdout, showStderr))
+		rows = append(rows, output.TableRow{Columns: []string{
+			s.Name,
+			fmt.Sprintf("%d", len(log.Stdout)),
+			fmt.Sprintf("%d", len(log.Stderr)),
+		}})
 	}
+
+	return formatter.Render(headers, rows, logData)
 }
 
 func buildLogOutput(log *pipeline.StepLog, showStdout, showStderr bool) map[string]string {

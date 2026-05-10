@@ -1,15 +1,18 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
-	"text/tabwriter"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
+	"github.com/kdobmayer/kond-test-go-cli/output"
 	"github.com/kdobmayer/kond-test-go-cli/pipeline"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+)
+
+var (
+	statusAll      bool
+	statusJSONFlag bool
 )
 
 var statusCmd = &cobra.Command{
@@ -22,11 +25,18 @@ var statusCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
-	statusCmd.Flags().Bool("all", false, "Show all runs")
+	statusCmd.Flags().BoolVar(&statusAll, "all", false, "Show all runs")
+	statusCmd.Flags().BoolVar(&statusJSONFlag, "json", false, "Output as JSON (shorthand for --output json)")
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	showAll, _ := cmd.Flags().GetBool("all")
+	showAll := statusAll
+	jsonOut := statusJSONFlag
+
+	format := outputFormat
+	if jsonOut {
+		format = "json"
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -34,14 +44,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if showAll {
-		return showAllRuns(cmd, cfg.RunDir)
+		return showAllRuns(cmd, cfg.RunDir, format)
 	}
 
 	var runID string
 	if len(args) > 0 {
 		runID = args[0]
 	} else {
-		// Find latest run
 		runs, err := pipeline.ListRuns(cfg.RunDir)
 		if err != nil {
 			return fmt.Errorf("listing runs: %w", err)
@@ -59,10 +68,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading run: %w", err)
 	}
 
-	return renderRunStatus(cmd, run)
+	return renderRunStatus(cmd, run, format)
 }
 
-func showAllRuns(cmd *cobra.Command, runDir string) error {
+func showAllRuns(cmd *cobra.Command, runDir string, format string) error {
 	runs, err := pipeline.ListRuns(runDir)
 	if err != nil {
 		return fmt.Errorf("listing runs: %w", err)
@@ -86,41 +95,30 @@ func showAllRuns(cmd *cobra.Command, runDir string) error {
 		summaries = append(summaries, runSummary{RunID: id, Status: run.Status})
 	}
 
-	// NOTE: duplicated output formatting (intentional rough edge — same pattern in run cmd)
-	switch outputFormat {
-	case "json":
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(summaries)
-	case "yaml":
-		enc := yaml.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent(2)
-		defer enc.Close()
-		return enc.Encode(summaries)
-	default:
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "RUN ID\tSTATUS")
-		fmt.Fprintln(w, "------\t------")
-		for _, s := range summaries {
-			fmt.Fprintf(w, "%s\t%s\n", s.RunID, s.Status)
-		}
-		return w.Flush()
+	formatter := output.NewFormatter(format, cmd.OutOrStdout())
+	headers := []string{"RUN ID", "STATUS"}
+	var rows []output.TableRow
+	for _, s := range summaries {
+		rows = append(rows, output.TableRow{Columns: []string{s.RunID, s.Status}})
 	}
+	return formatter.Render(headers, rows, summaries)
 }
 
-func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
-	// NOTE: duplicated output formatting (intentional rough edge)
-	switch outputFormat {
-	case "json":
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(run)
-	case "yaml":
-		enc := yaml.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent(2)
-		defer enc.Close()
-		return enc.Encode(run)
-	default:
+func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun, format string) error {
+	formatter := output.NewFormatter(format, cmd.OutOrStdout())
+	headers := []string{"STEP", "STATUS", "DURATION", "EXIT CODE", "ERROR"}
+	var rows []output.TableRow
+	for _, s := range run.Steps {
+		errStr := s.Error
+		if len(errStr) > 50 {
+			errStr = errStr[:50] + "..."
+		}
+		rows = append(rows, output.TableRow{
+			Columns: []string{s.Name, s.Status, s.Duration.String(), fmt.Sprintf("%d", s.ExitCode), errStr},
+		})
+	}
+
+	if format == "" || format == "table" {
 		fmt.Fprintf(cmd.OutOrStdout(), "Pipeline: %s\n", run.PipelineName)
 		fmt.Fprintf(cmd.OutOrStdout(), "Run ID:   %s\n", run.RunID)
 		fmt.Fprintf(cmd.OutOrStdout(), "Status:   %s\n", run.Status)
@@ -130,18 +128,7 @@ func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "Duration: %s\n", run.EndTime.Sub(run.StartTime))
 		}
 		fmt.Fprintln(cmd.OutOrStdout())
-
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "STEP\tSTATUS\tDURATION\tEXIT CODE\tERROR")
-		fmt.Fprintln(w, "----\t------\t--------\t---------\t-----")
-		for _, s := range run.Steps {
-			errStr := s.Error
-			if len(errStr) > 50 {
-				errStr = errStr[:50] + "..."
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
-				s.Name, s.Status, s.Duration, s.ExitCode, errStr)
-		}
-		return w.Flush()
 	}
+
+	return formatter.Render(headers, rows, run)
 }
