@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -127,6 +130,92 @@ steps:
 	out := buf.String()
 	if !bytes.Contains([]byte(out), []byte("Level")) {
 		t.Error("expected execution plan output")
+	}
+}
+
+func writeRunFile(t *testing.T, dir, id, status string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]interface{}{"run_id": id, "status": status})
+	if err != nil {
+		t.Fatalf("marshal run: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), data, 0644); err != nil {
+		t.Fatalf("write run file: %v", err)
+	}
+}
+
+func TestShowAllRunsJSON(t *testing.T) {
+	dir := t.TempDir()
+	writeRunFile(t, dir, "run-001", "success")
+	writeRunFile(t, dir, "run-002", "failed")
+
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	if err := showAllRuns(cmd, dir, "json"); err != nil {
+		t.Fatalf("showAllRuns error = %v", err)
+	}
+
+	var got []map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(got))
+	}
+	if got[0]["run_id"] != "run-001" || got[0]["status"] != "success" {
+		t.Errorf("first entry = %v, want run-001/success", got[0])
+	}
+	if got[1]["run_id"] != "run-002" || got[1]["status"] != "failed" {
+		t.Errorf("second entry = %v, want run-002/failed", got[1])
+	}
+}
+
+func TestShowAllRunsTable(t *testing.T) {
+	dir := t.TempDir()
+	writeRunFile(t, dir, "run-001", "success")
+
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	if err := showAllRuns(cmd, dir, "table"); err != nil {
+		t.Fatalf("showAllRuns error = %v", err)
+	}
+
+	out := buf.Bytes()
+	if !bytes.Contains(out, []byte("RUN ID")) {
+		t.Error("expected table header 'RUN ID' in output")
+	}
+	if !bytes.Contains(out, []byte("run-001")) {
+		t.Error("expected 'run-001' in output")
+	}
+}
+
+func TestShowAllRunsEmpty(t *testing.T) {
+	dir := t.TempDir()
+
+	cmd := &cobra.Command{}
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	if err := showAllRuns(cmd, dir, "json"); err != nil {
+		t.Fatalf("showAllRuns error = %v", err)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte("No pipeline runs found")) {
+		t.Error("expected 'No pipeline runs found' message")
+	}
+}
+
+func TestStatusCmdHasJSONFlag(t *testing.T) {
+	f := statusCmd.Flags().Lookup("json")
+	if f == nil {
+		t.Fatal("statusCmd missing --json flag")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--json default = %q, want %q", f.DefValue, "false")
 	}
 }
 

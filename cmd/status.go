@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
+	"github.com/kdobmayer/kond-test-go-cli/output"
 	"github.com/kdobmayer/kond-test-go-cli/pipeline"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -23,18 +24,25 @@ var statusCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	statusCmd.Flags().Bool("all", false, "Show all runs")
+	statusCmd.Flags().Bool("json", false, "Output as JSON (shorthand for --output=json)")
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	showAll, _ := cmd.Flags().GetBool("all")
+	jsonFlag, _ := cmd.Flags().GetBool("json")
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	effectiveFormat := outputFormat
+	if jsonFlag {
+		effectiveFormat = "json"
+	}
+
 	if showAll {
-		return showAllRuns(cmd, cfg.RunDir)
+		return showAllRuns(cmd, cfg.RunDir, effectiveFormat)
 	}
 
 	var runID string
@@ -62,7 +70,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return renderRunStatus(cmd, run)
 }
 
-func showAllRuns(cmd *cobra.Command, runDir string) error {
+func showAllRuns(cmd *cobra.Command, runDir, format string) error {
 	runs, err := pipeline.ListRuns(runDir)
 	if err != nil {
 		return fmt.Errorf("listing runs: %w", err)
@@ -86,26 +94,13 @@ func showAllRuns(cmd *cobra.Command, runDir string) error {
 		summaries = append(summaries, runSummary{RunID: id, Status: run.Status})
 	}
 
-	// NOTE: duplicated output formatting (intentional rough edge — same pattern in run cmd)
-	switch outputFormat {
-	case "json":
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(summaries)
-	case "yaml":
-		enc := yaml.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent(2)
-		defer enc.Close()
-		return enc.Encode(summaries)
-	default:
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "RUN ID\tSTATUS")
-		fmt.Fprintln(w, "------\t------")
-		for _, s := range summaries {
-			fmt.Fprintf(w, "%s\t%s\n", s.RunID, s.Status)
-		}
-		return w.Flush()
+	formatter := output.NewFormatter(format, cmd.OutOrStdout())
+	headers := []string{"RUN ID", "STATUS"}
+	var rows []output.TableRow
+	for _, s := range summaries {
+		rows = append(rows, output.TableRow{Columns: []string{s.RunID, s.Status}})
 	}
+	return formatter.Render(headers, rows, summaries)
 }
 
 func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
