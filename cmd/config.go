@@ -47,6 +47,7 @@ func init() {
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configInitCmd)
 	configSetCmd.Flags().String("config-file", "", "Path to config file")
+	configListCmd.Flags().Bool("json", false, "Output as JSON array")
 }
 
 func runConfigGet(cmd *cobra.Command, args []string) error {
@@ -101,7 +102,12 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
+	jsonFlag, _ := cmd.Flags().GetBool("json")
+	format := outputFormat
+	if jsonFlag {
+		format = "json"
+	}
+	formatter := output.NewFormatter(format, cmd.OutOrStdout())
 	headers := []string{"KEY", "VALUE"}
 	var rows []output.TableRow
 
