@@ -74,7 +74,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 
 func renderStepLog(cmd *cobra.Command, log *pipeline.StepLog, showStdout, showStderr bool) error {
 	// NOTE: duplicated output formatting (intentional rough edge — same pattern in status cmd)
-	switch outputFormat {
+	switch currentOutputFormat(cmd) {
 	case "json":
 		data := buildLogOutput(log, showStdout, showStderr)
 		enc := json.NewEncoder(cmd.OutOrStdout())
@@ -101,7 +101,7 @@ func renderStepLog(cmd *cobra.Command, log *pipeline.StepLog, showStdout, showSt
 
 func renderAllLogs(cmd *cobra.Command, runDir, runID string, run *pipeline.PipelineRun, showStdout, showStderr bool) error {
 	// NOTE: duplicated output formatting (intentional rough edge)
-	switch outputFormat {
+	switch currentOutputFormat(cmd) {
 	case "json":
 		var logs []interface{}
 		for _, s := range run.Steps {

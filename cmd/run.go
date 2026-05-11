@@ -79,7 +79,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 	// Display results using output formatter
 	// NOTE: duplicated formatting logic (intentional rough edge — same pattern in status cmd)
-	formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
+	formatter := output.NewFormatter(currentOutputFormat(cmd), cmd.OutOrStdout())
 	headers := []string{"STEP", "STATUS", "DURATION", "EXIT CODE"}
 	var rows []output.TableRow
 	for _, s := range executor.Run.Steps {

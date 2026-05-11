@@ -87,7 +87,7 @@ func showAllRuns(cmd *cobra.Command, runDir string) error {
 	}
 
 	// NOTE: duplicated output formatting (intentional rough edge — same pattern in run cmd)
-	switch outputFormat {
+	switch currentOutputFormat(cmd) {
 	case "json":
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -110,7 +110,7 @@ func showAllRuns(cmd *cobra.Command, runDir string) error {
 
 func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
 	// NOTE: duplicated output formatting (intentional rough edge)
-	switch outputFormat {
+	switch currentOutputFormat(cmd) {
 	case "json":
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")

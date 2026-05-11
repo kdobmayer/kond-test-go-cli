@@ -101,7 +101,7 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
+	formatter := output.NewFormatter(currentOutputFormat(cmd), cmd.OutOrStdout())
 	headers := []string{"KEY", "VALUE"}
 	var rows []output.TableRow
 

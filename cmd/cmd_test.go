@@ -2,12 +2,33 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
+func resetRootOutputFlags(t *testing.T) {
+	t.Helper()
+
+	outputFormat = "table"
+	jsonOutput = false
+
+	for _, name := range []string{"output", "json"} {
+		flag := rootCmd.PersistentFlags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("missing persistent flag %q", name)
+		}
+		if err := flag.Value.Set(flag.DefValue); err != nil {
+			t.Fatalf("reset flag %q: %v", name, err)
+		}
+		flag.Changed = false
+	}
+}
+
 func TestInitCommand(t *testing.T) {
+	resetRootOutputFlags(t)
+
 	dir := t.TempDir()
 
 	rootCmd.SetArgs([]string{"init", "test-pipeline", "-d", dir})
@@ -26,6 +47,8 @@ func TestInitCommand(t *testing.T) {
 }
 
 func TestInitCommand_AlreadyExists(t *testing.T) {
+	resetRootOutputFlags(t)
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "existing.yaml")
 	os.WriteFile(path, []byte("name: existing"), 0644)
@@ -42,6 +65,8 @@ func TestInitCommand_AlreadyExists(t *testing.T) {
 }
 
 func TestInitCommand_CustomSteps(t *testing.T) {
+	resetRootOutputFlags(t)
+
 	dir := t.TempDir()
 
 	rootCmd.SetArgs([]string{"init", "multi", "-d", dir, "--steps", "4"})
@@ -62,6 +87,8 @@ func TestInitCommand_CustomSteps(t *testing.T) {
 }
 
 func TestValidateCommand_Valid(t *testing.T) {
+	resetRootOutputFlags(t)
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "valid.yaml")
 	os.WriteFile(path, []byte(`
@@ -85,6 +112,8 @@ steps:
 }
 
 func TestValidateCommand_Invalid(t *testing.T) {
+	resetRootOutputFlags(t)
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "invalid.yaml")
 	os.WriteFile(path, []byte(`
@@ -104,6 +133,8 @@ steps: []
 }
 
 func TestRunCommand_DryRun(t *testing.T) {
+	resetRootOutputFlags(t)
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pipeline.yaml")
 	os.WriteFile(path, []byte(`
@@ -130,7 +161,59 @@ steps:
 	}
 }
 
+func TestValidateCommand_JsonFlag(t *testing.T) {
+	resetRootOutputFlags(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "invalid.yaml")
+	os.WriteFile(path, []byte(`
+name: ""
+steps: []
+`), 0644)
+
+	rootCmd.SetArgs([]string{"validate", "--json", path})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	// With --json, renderValidationErrors encodes errors as JSON and returns nil.
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("validate --json returned unexpected error: %v", err)
+	}
+
+	if !json.Valid(buf.Bytes()) {
+		t.Errorf("expected valid JSON output, got: %s", buf.String())
+	}
+}
+
+func TestValidateCommand_JsonFlagDoesNotOverrideExplicitOutput(t *testing.T) {
+	resetRootOutputFlags(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "invalid.yaml")
+	os.WriteFile(path, []byte(`
+name: ""
+steps: []
+`), 0644)
+
+	rootCmd.SetArgs([]string{"validate", "--json", "--output", "yaml", path})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("validate --json --output yaml returned unexpected error: %v", err)
+	}
+
+	if json.Valid(buf.Bytes()) {
+		t.Fatalf("expected YAML output, got JSON: %s", buf.String())
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("field:")) {
+		t.Fatalf("expected YAML validation output, got: %s", buf.String())
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
+	resetRootOutputFlags(t)
+
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {
 		t.Fatalf("expected 3 steps, got %d", len(steps))

@@ -83,7 +83,7 @@ func validateStrict(p *pipeline.Pipeline) []pipeline.ValidationError {
 
 func renderValidationErrors(cmd *cobra.Command, errs []pipeline.ValidationError) error {
 	// NOTE: duplicated output formatting (intentional rough edge)
-	switch outputFormat {
+	switch currentOutputFormat(cmd) {
 	case "json":
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
