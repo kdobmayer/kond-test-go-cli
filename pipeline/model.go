@@ -132,10 +132,16 @@ func (p *Pipeline) Validate() []ValidationError {
 		}
 
 		if step.Timeout != "" {
-			if _, err := time.ParseDuration(step.Timeout); err != nil {
+			duration, err := time.ParseDuration(step.Timeout)
+			if err != nil {
 				errs = append(errs, ValidationError{
 					Field:   fmt.Sprintf("steps[%d].timeout", i),
 					Message: fmt.Sprintf("invalid timeout duration: %s", step.Timeout),
+				})
+			} else if duration <= 0 {
+				errs = append(errs, ValidationError{
+					Field:   fmt.Sprintf("steps[%d].timeout", i),
+					Message: fmt.Sprintf("timeout duration must be positive: %s", step.Timeout),
 				})
 			}
 		}

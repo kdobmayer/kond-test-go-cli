@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -209,5 +210,122 @@ func TestNewExecutor_RunID(t *testing.T) {
 	}
 	if e.Run.Status != "pending" {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
+	}
+}
+
+func TestExecutor_TimeoutFires(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-test",
+		Steps: []Step{
+			{Name: "slow", Command: "sleep 10", Timeout: "100ms"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for timed-out step")
+	}
+
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+
+	if len(executor.Run.Steps) != 1 {
+		t.Fatalf("len(Steps) = %d, want 1", len(executor.Run.Steps))
+	}
+
+	step := executor.Run.Steps[0]
+	if step.Status != "failed" {
+		t.Errorf("step Status = %q, want %q", step.Status, "failed")
+	}
+	if !strings.Contains(step.Error, "timed out") {
+		t.Errorf("step Error = %q, want it to contain %q", step.Error, "timed out")
+	}
+}
+
+func TestExecutor_TimeoutNotExceeded(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-ok",
+		Steps: []Step{
+			{Name: "fast", Command: "echo done", Timeout: "5s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	if err := executor.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if executor.Run.Status != "completed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "completed")
+	}
+
+	step := executor.Run.Steps[0]
+	if step.Status != "completed" {
+		t.Errorf("step Status = %q, want %q", step.Status, "completed")
+	}
+	if step.Error != "" {
+		t.Errorf("step Error = %q, want empty", step.Error)
+	}
+}
+
+func TestExecutor_InvalidTimeoutFailsClearly(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-invalid",
+		Steps: []Step{
+			{Name: "bad", Command: "echo done", Timeout: "definitely-not-a-duration"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for invalid timeout")
+	}
+	if !strings.Contains(err.Error(), "parsing timeout") {
+		t.Fatalf("Execute() error = %q, want it to contain %q", err.Error(), "parsing timeout")
+	}
+
+	step := executor.Run.Steps[0]
+	if step.Status != "failed" {
+		t.Errorf("step Status = %q, want %q", step.Status, "failed")
+	}
+	if !strings.Contains(step.Error, "invalid step timeout") {
+		t.Errorf("step Error = %q, want it to contain %q", step.Error, "invalid step timeout")
+	}
+}
+
+func TestExecutor_NonPositiveTimeoutFailsClearly(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-non-positive",
+		Steps: []Step{
+			{Name: "bad", Command: "echo done", Timeout: "0s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for non-positive timeout")
+	}
+	if !strings.Contains(err.Error(), "timeout must be positive") {
+		t.Fatalf("Execute() error = %q, want it to contain %q", err.Error(), "timeout must be positive")
+	}
+
+	step := executor.Run.Steps[0]
+	if step.Status != "failed" {
+		t.Errorf("step Status = %q, want %q", step.Status, "failed")
+	}
+	if !strings.Contains(step.Error, "timeout must be positive") {
+		t.Errorf("step Error = %q, want it to contain %q", step.Error, "timeout must be positive")
 	}
 }

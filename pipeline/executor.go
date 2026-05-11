@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,7 +101,6 @@ func (e *Executor) executeLevel(steps []Step) error {
 }
 
 // executeStep runs a single step
-// NOTE: timeout field is parsed but NOT enforced (intentional rough edge)
 func (e *Executor) executeStep(step Step) error {
 	e.updateStepStatus(step.Name, "running", 0, "")
 
@@ -115,7 +115,25 @@ func (e *Executor) executeStep(step Step) error {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	cmd := exec.Command("sh", "-c", step.Command)
+	ctx := context.Background()
+	cancel := func() {}
+	var timeoutDuration time.Duration
+	if step.Timeout != "" {
+		var err error
+		timeoutDuration, err = time.ParseDuration(step.Timeout)
+		if err != nil {
+			e.recordStepResult(step.Name, "failed", 1, startTime, time.Now(), 0, fmt.Sprintf("invalid step timeout %q", step.Timeout))
+			return fmt.Errorf("parsing timeout for step %q: %w", step.Name, err)
+		}
+		if timeoutDuration <= 0 {
+			e.recordStepResult(step.Name, "failed", 1, startTime, time.Now(), 0, fmt.Sprintf("step timeout must be positive, got %q", step.Timeout))
+			return fmt.Errorf("parsing timeout for step %q: timeout must be positive", step.Name)
+		}
+		ctx, cancel = context.WithTimeout(ctx, timeoutDuration)
+	}
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", step.Command)
 	cmd.Env = env
 	if step.WorkDir != "" {
 		cmd.Dir = step.WorkDir
@@ -145,30 +163,25 @@ func (e *Executor) executeStep(step Step) error {
 
 	if err != nil {
 		status = "failed"
-		errMsg = err.Error()
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
+		if ctx.Err() == context.DeadlineExceeded {
 			exitCode = 1
+			errMsg = fmt.Sprintf("step timed out after %s", timeoutDuration)
+		} else {
+			errMsg = err.Error()
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
 		}
 	}
 
-	// Update step status with timing
-	e.mu.Lock()
-	for i := range e.Run.Steps {
-		if e.Run.Steps[i].Name == step.Name {
-			e.Run.Steps[i].Status = status
-			e.Run.Steps[i].ExitCode = exitCode
-			e.Run.Steps[i].StartTime = startTime
-			e.Run.Steps[i].EndTime = endTime
-			e.Run.Steps[i].Duration = duration
-			e.Run.Steps[i].Error = errMsg
-			break
-		}
-	}
-	e.mu.Unlock()
+	e.recordStepResult(step.Name, status, exitCode, startTime, endTime, duration, errMsg)
 
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("step %q timed out after %s: %w", step.Name, timeoutDuration, err)
+		}
 		return fmt.Errorf("step %q failed: %w", step.Name, err)
 	}
 	return nil
@@ -186,6 +199,22 @@ func (e *Executor) updateStepStatus(name, status string, exitCode int, errMsg st
 			if status == "running" {
 				e.Run.Steps[i].StartTime = time.Now()
 			}
+			break
+		}
+	}
+}
+
+func (e *Executor) recordStepResult(name, status string, exitCode int, startTime, endTime time.Time, duration time.Duration, errMsg string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for i := range e.Run.Steps {
+		if e.Run.Steps[i].Name == name {
+			e.Run.Steps[i].Status = status
+			e.Run.Steps[i].ExitCode = exitCode
+			e.Run.Steps[i].StartTime = startTime
+			e.Run.Steps[i].EndTime = endTime
+			e.Run.Steps[i].Duration = duration
+			e.Run.Steps[i].Error = errMsg
 			break
 		}
 	}
