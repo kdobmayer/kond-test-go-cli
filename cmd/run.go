@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
 	"github.com/kdobmayer/kond-test-go-cli/output"
@@ -22,11 +24,13 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running")
 	runCmd.Flags().Bool("verbose", false, "Show step output in real-time")
+	runCmd.Flags().Int("timeout", 0, "Maximum execution time in seconds (0 = no timeout)")
 }
 
 func runPipeline(cmd *cobra.Command, args []string) error {
 	pipelineFile := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	timeout, _ := cmd.Flags().GetInt("timeout")
 
 	// Load pipeline
 	p, err := pipeline.LoadPipeline(pipelineFile)
@@ -75,7 +79,14 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	executor := pipeline.NewExecutor(p, cfg.RunDir)
 	fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
 
-	execErr := executor.Execute()
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	}
+
+	execErr := executor.Execute(ctx)
 
 	// Display results using output formatter
 	// NOTE: duplicated formatting logic (intentional rough edge — same pattern in status cmd)

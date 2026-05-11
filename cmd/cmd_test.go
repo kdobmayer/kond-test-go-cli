@@ -130,6 +130,27 @@ steps:
 	}
 }
 
+func TestRunCommand_Timeout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	os.WriteFile(path, []byte(`
+name: timeout-test
+steps:
+  - name: slow
+    command: sleep 10
+`), 0644)
+
+	rootCmd.SetArgs([]string{"run", path, "--timeout", "1", "--dry-run=false"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Error("expected error due to timeout")
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {

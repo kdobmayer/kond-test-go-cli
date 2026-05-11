@@ -1,7 +1,11 @@
 package pipeline
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecutor_SimpleSuccess(t *testing.T) {
@@ -15,7 +19,7 @@ func TestExecutor_SimpleSuccess(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -52,7 +56,7 @@ func TestExecutor_StepFailure(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	err := executor.Execute()
+	err := executor.Execute(context.Background())
 	if err == nil {
 		t.Fatal("Execute() expected error")
 	}
@@ -78,7 +82,7 @@ func TestExecutor_MultipleSteps(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -102,7 +106,7 @@ func TestExecutor_ParallelSteps(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -127,7 +131,7 @@ func TestExecutor_Environment(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -144,7 +148,7 @@ func TestExecutor_SaveRun(t *testing.T) {
 	}
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -174,7 +178,7 @@ func TestExecutor_EmptyRunDir(t *testing.T) {
 	}
 
 	executor := NewExecutor(p, "")
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	// Should not panic with empty RunDir
@@ -191,7 +195,7 @@ func TestExecutor_StepWithStderr(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -209,5 +213,65 @@ func TestNewExecutor_RunID(t *testing.T) {
 	}
 	if e.Run.Status != "pending" {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
+	}
+}
+
+func TestExecutor_Timeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-test",
+		Steps: []Step{
+			{Name: "slow", Command: "sleep 10"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := executor.Execute(ctx)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Execute() expected error due to timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded error, got: %v", err)
+	}
+	if elapsed >= 5*time.Second {
+		t.Errorf("test took too long (%v), timeout not enforced", elapsed)
+	}
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+	if executor.Run.Steps[0].Status != "failed" {
+		t.Errorf("step status = %q, want %q", executor.Run.Steps[0].Status, "failed")
+	}
+	if !strings.Contains(executor.Run.Steps[0].Error, "timed out") {
+		t.Errorf("step error %q should contain 'timed out'", executor.Run.Steps[0].Error)
+	}
+}
+
+func TestExecutor_CompletesWithinTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "fast-test",
+		Steps: []Step{
+			{Name: "fast", Command: "echo done"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := executor.Execute(ctx); err != nil {
+		t.Fatalf("Execute() unexpected error = %v", err)
+	}
+	if executor.Run.Status != "completed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "completed")
 	}
 }
