@@ -130,6 +130,42 @@ steps:
 	}
 }
 
+func TestRunCommand_Verbose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(`
+name: verbose-run
+steps:
+  - name: greet
+    command: echo verbose-marker
+`), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	// dry-run flag state persists across Execute() calls on the shared rootCmd singleton;
+	// reset it so this test doesn't inherit the state from TestRunCommand_DryRun.
+	_ = runCmd.Flags().Set("dry-run", "false")
+	_ = rootCmd.PersistentFlags().Set("verbose", "false")
+
+	rootCmd.SetArgs([]string{"run", path, "--verbose"})
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+	t.Cleanup(func() {
+		_ = rootCmd.PersistentFlags().Set("verbose", "false")
+		rootCmd.SetOut(nil)
+		rootCmd.SetErr(nil)
+	})
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("run --verbose error = %v", err)
+	}
+
+	if !bytes.Contains(stderr.Bytes(), []byte("verbose-marker")) {
+		t.Errorf("stderr %q should contain step output", stderr.String())
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {

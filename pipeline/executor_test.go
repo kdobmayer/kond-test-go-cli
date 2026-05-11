@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -209,5 +210,40 @@ func TestNewExecutor_RunID(t *testing.T) {
 	}
 	if e.Run.Status != "pending" {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
+	}
+}
+
+func TestExecutor_VerboseOutput(t *testing.T) {
+	p := &Pipeline{
+		Name: "verbose-test",
+		Steps: []Step{
+			{Name: "greet", Command: "echo hello"},
+			{Name: "warn", Command: "echo oops >&2"},
+		},
+	}
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	var verboseBuf bytes.Buffer
+	executor.Verbose = &verboseBuf
+
+	if err := executor.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	// Logs are still fully captured regardless of verbose
+	if executor.Logs["greet"].Stdout != "hello\n" {
+		t.Errorf("log stdout = %q, want %q", executor.Logs["greet"].Stdout, "hello\n")
+	}
+	if executor.Logs["warn"].Stderr != "oops\n" {
+		t.Errorf("log stderr = %q, want %q", executor.Logs["warn"].Stderr, "oops\n")
+	}
+
+	out := verboseBuf.String()
+	if !bytes.Contains([]byte(out), []byte("[greet] hello")) {
+		t.Errorf("verbose output %q should contain %q", out, "[greet] hello")
+	}
+	if !bytes.Contains([]byte(out), []byte("[warn err] oops")) {
+		t.Errorf("verbose output %q should contain %q", out, "[warn err] oops")
 	}
 }

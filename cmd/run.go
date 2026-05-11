@@ -21,7 +21,6 @@ var runCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running")
-	runCmd.Flags().Bool("verbose", false, "Show step output in real-time")
 }
 
 func runPipeline(cmd *cobra.Command, args []string) error {
@@ -73,6 +72,13 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 	// Execute
 	executor := pipeline.NewExecutor(p, cfg.RunDir)
+	verbose, err := cmd.Flags().GetBool("verbose")
+	if err != nil {
+		return fmt.Errorf("reading verbose flag: %w", err)
+	}
+	if verbose {
+		executor.Verbose = cmd.ErrOrStderr()
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
 
 	execErr := executor.Execute()

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,59 @@ type Executor struct {
 	RunDir   string
 	Run      *PipelineRun
 	Logs     map[string]*StepLog
+	Verbose  io.Writer
 	mu       sync.Mutex
+	verboseMu sync.Mutex
+}
+
+// linePrefixWriter prefixes each output line and serializes writes through a shared mutex.
+type linePrefixWriter struct {
+	prefix string
+	w      io.Writer
+	mu     *sync.Mutex
+	// atLineStart tracks whether the next byte starts a new line.
+	atLineStart bool
+}
+
+func newLinePrefixWriter(prefix string, w io.Writer, mu *sync.Mutex) *linePrefixWriter {
+	return &linePrefixWriter{
+		prefix:      prefix,
+		w:           w,
+		mu:          mu,
+		atLineStart: true,
+	}
+}
+
+func (pw *linePrefixWriter) Write(p []byte) (int, error) {
+	originalLen := len(p)
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+
+	for len(p) > 0 {
+		if pw.atLineStart {
+			if _, err := io.WriteString(pw.w, pw.prefix); err != nil {
+				return 0, err
+			}
+			pw.atLineStart = false
+		}
+
+		newline := bytes.IndexByte(p, '\n')
+		if newline == -1 {
+			if _, err := pw.w.Write(p); err != nil {
+				return 0, err
+			}
+			return originalLen, nil
+		}
+
+		chunk := p[:newline+1]
+		if _, err := pw.w.Write(chunk); err != nil {
+			return 0, err
+		}
+		pw.atLineStart = true
+		p = p[newline+1:]
+	}
+
+	return originalLen, nil
 }
 
 // NewExecutor creates a new pipeline executor
@@ -122,8 +175,13 @@ func (e *Executor) executeStep(step Step) error {
 	}
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	if e.Verbose != nil {
+		cmd.Stdout = io.MultiWriter(&stdout, newLinePrefixWriter("["+step.Name+"] ", e.Verbose, &e.verboseMu))
+		cmd.Stderr = io.MultiWriter(&stderr, newLinePrefixWriter("["+step.Name+" err] ", e.Verbose, &e.verboseMu))
+	} else {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	}
 
 	err := cmd.Run()
 

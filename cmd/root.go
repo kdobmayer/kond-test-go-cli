@@ -17,6 +17,7 @@ multi-step pipelines with dependency management and parallel execution.`,
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
+	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Stream step output to stderr in real-time")
 }
 
 func Execute() error {
