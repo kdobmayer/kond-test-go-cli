@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,11 +101,23 @@ func (e *Executor) executeLevel(steps []Step) error {
 }
 
 // executeStep runs a single step
-// NOTE: timeout field is parsed but NOT enforced (intentional rough edge)
 func (e *Executor) executeStep(step Step) error {
 	e.updateStepStatus(step.Name, "running", 0, "")
 
 	startTime := time.Now()
+
+	ctx := context.Background()
+	cancel := context.CancelFunc(func() {})
+	var timeoutErr error
+	if step.Timeout != "" {
+		d, err := time.ParseDuration(step.Timeout)
+		if err != nil {
+			timeoutErr = fmt.Errorf("parsing timeout for step %q: %w", step.Name, err)
+		} else {
+			ctx, cancel = context.WithTimeout(ctx, d)
+		}
+	}
+	defer cancel()
 
 	// Build environment
 	env := os.Environ()
@@ -115,17 +128,20 @@ func (e *Executor) executeStep(step Step) error {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	cmd := exec.Command("sh", "-c", step.Command)
-	cmd.Env = env
-	if step.WorkDir != "" {
-		cmd.Dir = step.WorkDir
-	}
-
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	var runErr error
+	if timeoutErr == nil {
+		cmd := exec.CommandContext(ctx, "sh", "-c", step.Command)
+		cmd.Env = env
+		if step.WorkDir != "" {
+			cmd.Dir = step.WorkDir
+		}
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		runErr = cmd.Run()
+	}
 
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
@@ -142,15 +158,27 @@ func (e *Executor) executeStep(step Step) error {
 	exitCode := 0
 	errMsg := ""
 	status := "completed"
+	var returnErr error
 
-	if err != nil {
+	if timeoutErr != nil {
 		status = "failed"
-		errMsg = err.Error()
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		returnErr = timeoutErr
+		errMsg = returnErr.Error()
+		exitCode = 1
+	} else if ctx.Err() == context.DeadlineExceeded {
+		status = "failed"
+		returnErr = fmt.Errorf("step %q timed out after %s: %w", step.Name, step.Timeout, context.DeadlineExceeded)
+		errMsg = returnErr.Error()
+		exitCode = 1
+	} else if runErr != nil {
+		status = "failed"
+		errMsg = runErr.Error()
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = 1
 		}
+		returnErr = fmt.Errorf("step %q failed: %w", step.Name, runErr)
 	}
 
 	// Update step status with timing
@@ -168,10 +196,7 @@ func (e *Executor) executeStep(step Step) error {
 	}
 	e.mu.Unlock()
 
-	if err != nil {
-		return fmt.Errorf("step %q failed: %w", step.Name, err)
-	}
-	return nil
+	return returnErr
 }
 
 // updateStepStatus updates the status of a step

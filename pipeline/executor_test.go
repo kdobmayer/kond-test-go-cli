@@ -1,6 +1,9 @@
 package pipeline
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -209,5 +212,90 @@ func TestNewExecutor_RunID(t *testing.T) {
 	}
 	if e.Run.Status != "pending" {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
+	}
+}
+
+func TestExecutor_StepTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-test",
+		Steps: []Step{
+			{Name: "slow", Command: "sleep 10", Timeout: "200ms"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for timed-out step")
+	}
+
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+
+	errStr := err.Error()
+	if !strings.Contains(errStr, "slow") {
+		t.Errorf("error %q does not contain step name", errStr)
+	}
+	if !strings.Contains(errStr, "timed out") {
+		t.Errorf("error %q does not contain 'timed out'", errStr)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("errors.Is(err, context.DeadlineExceeded) = false, want true")
+	}
+}
+
+func TestExecutor_StepTimeout_ShortEnough(t *testing.T) {
+	p := &Pipeline{
+		Name: "no-timeout-test",
+		Steps: []Step{
+			{Name: "quick", Command: "echo ok", Timeout: "2s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	if err := executor.Execute(); err != nil {
+		t.Fatalf("Execute() unexpected error = %v", err)
+	}
+
+	if executor.Run.Status != "completed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "completed")
+	}
+
+	if executor.Run.Steps[0].Status != "completed" {
+		t.Errorf("Step status = %q, want %q", executor.Run.Steps[0].Status, "completed")
+	}
+}
+
+func TestExecutor_InvalidStepTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "invalid-timeout-test",
+		Steps: []Step{
+			{Name: "bad-timeout", Command: "echo ok", Timeout: "not-a-duration"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for invalid timeout")
+	}
+
+	if !strings.Contains(err.Error(), `parsing timeout for step "bad-timeout"`) {
+		t.Errorf("error = %q, want timeout parsing context", err.Error())
+	}
+
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+
+	if executor.Run.Steps[0].Status != "failed" {
+		t.Errorf("Step status = %q, want %q", executor.Run.Steps[0].Status, "failed")
 	}
 }
