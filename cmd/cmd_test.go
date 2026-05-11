@@ -130,6 +130,57 @@ steps:
 	}
 }
 
+func TestRootFooFlag(t *testing.T) {
+	t.Cleanup(func() { fooFlag = false })
+
+	rootCmd.SetArgs([]string{"--foo"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("--foo error = %v", err)
+	}
+
+	if got := buf.String(); got != "foo\n" {
+		t.Errorf("--foo output = %q, want %q", got, "foo\n")
+	}
+}
+
+func TestRootNoFooFlag(t *testing.T) {
+	t.Cleanup(func() { fooFlag = false })
+
+	rootCmd.SetArgs([]string{})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("root (no flags) error = %v", err)
+	}
+
+	if bytes.Contains(buf.Bytes(), []byte("foo")) {
+		t.Error("expected 'foo' not to appear in output when --foo is not set")
+	}
+}
+
+func TestRootFooFlagWithSubcommand(t *testing.T) {
+	t.Cleanup(func() { fooFlag = false })
+
+	dir := t.TempDir()
+
+	rootCmd.SetArgs([]string{"--foo", "init", "subcommand-flag", "-d", dir})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("subcommand with --foo error = %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "subcommand-flag.yaml")); err != nil {
+		t.Fatalf("pipeline file not created: %v", err)
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {
