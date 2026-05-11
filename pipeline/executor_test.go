@@ -1,7 +1,10 @@
 package pipeline
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecutor_SimpleSuccess(t *testing.T) {
@@ -15,7 +18,7 @@ func TestExecutor_SimpleSuccess(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -52,7 +55,7 @@ func TestExecutor_StepFailure(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	err := executor.Execute()
+	err := executor.Execute(context.Background())
 	if err == nil {
 		t.Fatal("Execute() expected error")
 	}
@@ -78,7 +81,7 @@ func TestExecutor_MultipleSteps(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -102,7 +105,7 @@ func TestExecutor_ParallelSteps(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -127,7 +130,7 @@ func TestExecutor_Environment(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -144,7 +147,7 @@ func TestExecutor_SaveRun(t *testing.T) {
 	}
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -174,7 +177,7 @@ func TestExecutor_EmptyRunDir(t *testing.T) {
 	}
 
 	executor := NewExecutor(p, "")
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	// Should not panic with empty RunDir
@@ -191,7 +194,7 @@ func TestExecutor_StepWithStderr(t *testing.T) {
 	dir := t.TempDir()
 	executor := NewExecutor(p, dir)
 
-	if err := executor.Execute(); err != nil {
+	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
@@ -209,5 +212,81 @@ func TestNewExecutor_RunID(t *testing.T) {
 	}
 	if e.Run.Status != "pending" {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
+	}
+}
+
+func TestExecutor_TimeoutExceeded(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-test",
+		Steps: []Step{
+			{Name: "slow", Command: "sleep 10", Timeout: "100ms"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute(context.Background())
+	if err == nil {
+		t.Fatal("Execute() expected error for timed-out step")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error %q should contain %q", err.Error(), "timed out")
+	}
+
+	if len(executor.Run.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(executor.Run.Steps))
+	}
+	if executor.Run.Steps[0].Status != "timed_out" {
+		t.Errorf("step status = %q, want %q", executor.Run.Steps[0].Status, "timed_out")
+	}
+	if executor.Run.Steps[0].ExitCode == 0 {
+		t.Errorf("timed out step exit code = %d, want non-zero", executor.Run.Steps[0].ExitCode)
+	}
+}
+
+func TestExecutor_TimeoutNotExceeded(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-ample",
+		Steps: []Step{
+			{Name: "fast", Command: "echo hello", Timeout: "5s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if executor.Run.Steps[0].Status != "completed" {
+		t.Errorf("step status = %q, want %q", executor.Run.Steps[0].Status, "completed")
+	}
+}
+
+func TestExecutor_ParentDeadlineNotReportedAsStepTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "parent-deadline",
+		Steps: []Step{
+			{Name: "slow", Command: "sleep 10", Timeout: "5s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	t.Cleanup(cancel)
+
+	err := executor.Execute(ctx)
+	if err == nil {
+		t.Fatal("Execute() expected error for parent context deadline")
+	}
+	if strings.Contains(err.Error(), "timed out after 5s") {
+		t.Fatalf("error %q should not report the step timeout when the parent context expired", err.Error())
+	}
+	if executor.Run.Steps[0].Status != "failed" {
+		t.Errorf("step status = %q, want %q", executor.Run.Steps[0].Status, "failed")
 	}
 }

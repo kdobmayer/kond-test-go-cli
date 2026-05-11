@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,7 +40,7 @@ func NewExecutor(p *Pipeline, runDir string) *Executor {
 }
 
 // Execute runs the pipeline
-func (e *Executor) Execute() error {
+func (e *Executor) Execute(ctx context.Context) error {
 	e.Run.Status = "running"
 	e.Run.StartTime = time.Now()
 
@@ -60,7 +62,7 @@ func (e *Executor) Execute() error {
 
 	// Execute each level in parallel
 	for _, level := range levels {
-		if err := e.executeLevel(level); err != nil {
+		if err := e.executeLevel(ctx, level); err != nil {
 			e.Run.Status = "failed"
 			e.Run.EndTime = time.Now()
 			e.saveRun()
@@ -75,7 +77,7 @@ func (e *Executor) Execute() error {
 }
 
 // executeLevel runs all steps in a level concurrently
-func (e *Executor) executeLevel(steps []Step) error {
+func (e *Executor) executeLevel(ctx context.Context, steps []Step) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(steps))
 
@@ -83,7 +85,7 @@ func (e *Executor) executeLevel(steps []Step) error {
 		wg.Add(1)
 		go func(s Step) {
 			defer wg.Done()
-			if err := e.executeStep(s); err != nil {
+			if err := e.executeStep(ctx, s); err != nil {
 				errCh <- err
 			}
 		}(step)
@@ -100,8 +102,7 @@ func (e *Executor) executeLevel(steps []Step) error {
 }
 
 // executeStep runs a single step
-// NOTE: timeout field is parsed but NOT enforced (intentional rough edge)
-func (e *Executor) executeStep(step Step) error {
+func (e *Executor) executeStep(ctx context.Context, step Step) error {
 	e.updateStepStatus(step.Name, "running", 0, "")
 
 	startTime := time.Now()
@@ -115,10 +116,24 @@ func (e *Executor) executeStep(step Step) error {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	cmd := exec.Command("sh", "-c", step.Command)
+	stepCtx := ctx
+	var d time.Duration
+	if step.Timeout != "" {
+		d, _ = time.ParseDuration(step.Timeout) // safe: Validate() rejects invalid durations
+		var cancel context.CancelFunc
+		stepCtx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(stepCtx, "sh", "-c", step.Command)
 	cmd.Env = env
 	if step.WorkDir != "" {
 		cmd.Dir = step.WorkDir
+	}
+	// WaitDelay bounds I/O-drain wait after process kill so orphaned child
+	// processes holding pipes open don't stall the executor past the timeout.
+	if d > 0 {
+		cmd.WaitDelay = d
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -142,14 +157,27 @@ func (e *Executor) executeStep(step Step) error {
 	exitCode := 0
 	errMsg := ""
 	status := "completed"
+	stepTimedOut := step.Timeout != "" &&
+		errors.Is(stepCtx.Err(), context.DeadlineExceeded) &&
+		!errors.Is(ctx.Err(), context.DeadlineExceeded)
 
 	if err != nil {
-		status = "failed"
-		errMsg = err.Error()
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
+		if stepTimedOut {
+			status = "timed_out"
+			errMsg = fmt.Sprintf("step %q timed out after %s", step.Name, step.Timeout)
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
 		} else {
-			exitCode = 1
+			status = "failed"
+			errMsg = err.Error()
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
 		}
 	}
 
@@ -169,6 +197,9 @@ func (e *Executor) executeStep(step Step) error {
 	e.mu.Unlock()
 
 	if err != nil {
+		if stepTimedOut {
+			return fmt.Errorf("step %q timed out after %s: %w", step.Name, step.Timeout, stepCtx.Err())
+		}
 		return fmt.Errorf("step %q failed: %w", step.Name, err)
 	}
 	return nil

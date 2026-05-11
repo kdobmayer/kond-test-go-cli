@@ -75,7 +75,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	executor := pipeline.NewExecutor(p, cfg.RunDir)
 	fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
 
-	execErr := executor.Execute()
+	execErr := executor.Execute(cmd.Context())
 
 	// Display results using output formatter
 	// NOTE: duplicated formatting logic (intentional rough edge — same pattern in status cmd)
