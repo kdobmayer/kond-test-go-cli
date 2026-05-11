@@ -130,6 +130,29 @@ steps:
 	}
 }
 
+func TestVersionCommand(t *testing.T) {
+	previousVersion, previousCommit, previousDate := appVersion, appCommit, appDate
+	SetVersion("test-version", "test-commit", "2026-05-11T00:00:00Z")
+	t.Cleanup(func() {
+		SetVersion(previousVersion, previousCommit, previousDate)
+	})
+
+	rootCmd.SetArgs([]string{"version"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("version command error = %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"test-version", "test-commit", "2026-05-11T00:00:00Z"} {
+		if !bytes.Contains([]byte(out), []byte(want)) {
+			t.Errorf("expected %q in version output, got: %s", want, out)
+		}
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {
