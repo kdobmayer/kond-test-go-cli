@@ -2,11 +2,13 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -100,11 +102,28 @@ func (e *Executor) executeLevel(steps []Step) error {
 }
 
 // executeStep runs a single step
-// NOTE: timeout field is parsed but NOT enforced (intentional rough edge)
 func (e *Executor) executeStep(step Step) error {
 	e.updateStepStatus(step.Name, "running", 0, "")
 
 	startTime := time.Now()
+	recordResult := func(status string, exitCode int, errMsg string) {
+		endTime := time.Now()
+		duration := endTime.Sub(startTime)
+
+		e.mu.Lock()
+		for i := range e.Run.Steps {
+			if e.Run.Steps[i].Name == step.Name {
+				e.Run.Steps[i].Status = status
+				e.Run.Steps[i].ExitCode = exitCode
+				e.Run.Steps[i].StartTime = startTime
+				e.Run.Steps[i].EndTime = endTime
+				e.Run.Steps[i].Duration = duration
+				e.Run.Steps[i].Error = errMsg
+				break
+			}
+		}
+		e.mu.Unlock()
+	}
 
 	// Build environment
 	env := os.Environ()
@@ -115,10 +134,34 @@ func (e *Executor) executeStep(step Step) error {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	cmd := exec.Command("sh", "-c", step.Command)
+	ctx := context.Background()
+	cancel := func() {}
+	if step.Timeout != "" {
+		d, parseErr := time.ParseDuration(step.Timeout)
+		if parseErr != nil {
+			errMsg := fmt.Sprintf("invalid timeout %q", step.Timeout)
+			recordResult("failed", 1, errMsg)
+			return fmt.Errorf("parsing timeout for step %q: %w", step.Name, parseErr)
+		}
+		ctx, cancel = context.WithTimeout(ctx, d)
+	}
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", step.Command)
 	cmd.Env = env
 	if step.WorkDir != "" {
 		cmd.Dir = step.WorkDir
+	}
+	// Put child in its own process group so the whole tree is killed on timeout.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+			return err
+		}
+		return nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -126,9 +169,6 @@ func (e *Executor) executeStep(step Step) error {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-
-	endTime := time.Now()
-	duration := endTime.Sub(startTime)
 
 	// Store logs
 	e.mu.Lock()
@@ -144,31 +184,27 @@ func (e *Executor) executeStep(step Step) error {
 	status := "completed"
 
 	if err != nil {
-		status = "failed"
-		errMsg = err.Error()
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
+		if ctx.Err() == context.DeadlineExceeded {
+			status = "timed_out"
+			exitCode = -1
+			errMsg = fmt.Sprintf("step timed out after %s", step.Timeout)
 		} else {
-			exitCode = 1
+			status = "failed"
+			errMsg = err.Error()
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
 		}
 	}
 
-	// Update step status with timing
-	e.mu.Lock()
-	for i := range e.Run.Steps {
-		if e.Run.Steps[i].Name == step.Name {
-			e.Run.Steps[i].Status = status
-			e.Run.Steps[i].ExitCode = exitCode
-			e.Run.Steps[i].StartTime = startTime
-			e.Run.Steps[i].EndTime = endTime
-			e.Run.Steps[i].Duration = duration
-			e.Run.Steps[i].Error = errMsg
-			break
-		}
-	}
-	e.mu.Unlock()
+	recordResult(status, exitCode, errMsg)
 
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("step %q timed out after %s", step.Name, step.Timeout)
+		}
 		return fmt.Errorf("step %q failed: %w", step.Name, err)
 	}
 	return nil

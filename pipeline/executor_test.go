@@ -211,3 +211,95 @@ func TestNewExecutor_RunID(t *testing.T) {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
 	}
 }
+
+func TestExecutor_StepTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-test",
+		Steps: []Step{
+			{Name: "slow", Command: "sleep 10", Timeout: "200ms"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for timed-out step")
+	}
+
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+
+	if len(executor.Run.Steps) != 1 {
+		t.Fatalf("len(Steps) = %d, want 1", len(executor.Run.Steps))
+	}
+
+	step := executor.Run.Steps[0]
+	if step.Status != "timed_out" {
+		t.Errorf("step Status = %q, want %q", step.Status, "timed_out")
+	}
+	if step.ExitCode != -1 {
+		t.Errorf("step ExitCode = %d, want -1", step.ExitCode)
+	}
+	if step.Error == "" {
+		t.Error("step Error should be non-empty for timed-out step")
+	}
+}
+
+func TestExecutor_TimeoutDoesNotAffectFastSteps(t *testing.T) {
+	p := &Pipeline{
+		Name: "fast-timeout-test",
+		Steps: []Step{
+			{Name: "fast", Command: "echo ok", Timeout: "5s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	if err := executor.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if executor.Run.Status != "completed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "completed")
+	}
+
+	step := executor.Run.Steps[0]
+	if step.Status != "completed" {
+		t.Errorf("step Status = %q, want %q", step.Status, "completed")
+	}
+}
+
+func TestExecutor_InvalidTimeoutMarksStepFailed(t *testing.T) {
+	p := &Pipeline{
+		Name: "invalid-timeout-test",
+		Steps: []Step{
+			{Name: "bad-timeout", Command: "echo ok", Timeout: "not-a-duration"},
+		},
+	}
+
+	executor := NewExecutor(p, "")
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for invalid timeout")
+	}
+
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+
+	step := executor.Run.Steps[0]
+	if step.Status != "failed" {
+		t.Errorf("step Status = %q, want %q", step.Status, "failed")
+	}
+	if step.Error == "" {
+		t.Error("step Error should be non-empty for invalid timeout")
+	}
+	if step.EndTime.IsZero() {
+		t.Error("step EndTime should be set for invalid timeout")
+	}
+}
