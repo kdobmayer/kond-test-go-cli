@@ -9,8 +9,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "pipeline",
-	Short: "A CLI tool for managing and executing pipelines",
+	Use:     "pipeline",
+	Version: Version,
+	Short:   "A CLI tool for managing and executing pipelines",
 	Long: `Pipeline is a CLI tool that allows you to define, execute, and monitor
 multi-step pipelines with dependency management and parallel execution.`,
 }
