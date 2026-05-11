@@ -1,6 +1,9 @@
 package pipeline
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -198,6 +201,93 @@ func TestExecutor_StepWithStderr(t *testing.T) {
 	log := executor.Logs["err"]
 	if log.Stderr != "error\n" {
 		t.Errorf("stderr = %q, want %q", log.Stderr, "error\n")
+	}
+}
+
+func TestExecutor_StepTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "timeout-test",
+		Steps: []Step{
+			{Name: "slow", Command: "sleep 10", Timeout: "100ms"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for timed-out step")
+	}
+
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "timed out")
+	}
+	if !strings.Contains(err.Error(), "slow") {
+		t.Errorf("error = %q, want it to contain step name %q", err.Error(), "slow")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error = %v, want it to wrap context deadline exceeded", err)
+	}
+
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+	if executor.Run.Steps[0].Status != "failed" {
+		t.Errorf("step status = %q, want %q", executor.Run.Steps[0].Status, "failed")
+	}
+}
+
+func TestExecutor_StepCompletesBeforeTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name: "within-timeout",
+		Steps: []Step{
+			{Name: "fast", Command: "echo ok", Timeout: "5s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	if err := executor.Execute(); err != nil {
+		t.Fatalf("Execute() unexpected error = %v", err)
+	}
+
+	if executor.Run.Status != "completed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "completed")
+	}
+	if executor.Run.Steps[0].Status != "completed" {
+		t.Errorf("step status = %q, want %q", executor.Run.Steps[0].Status, "completed")
+	}
+}
+
+func TestExecutor_InvalidTimeoutMarksStepFailed(t *testing.T) {
+	p := &Pipeline{
+		Name: "bad-timeout-test",
+		Steps: []Step{
+			{Name: "bad", Command: "echo ok", Timeout: "0s"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error for invalid timeout")
+	}
+
+	if !strings.Contains(err.Error(), "invalid timeout") {
+		t.Errorf("error = %q, want it to contain %q", err.Error(), "invalid timeout")
+	}
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "failed")
+	}
+	if executor.Run.Steps[0].Status != "failed" {
+		t.Errorf("step status = %q, want %q", executor.Run.Steps[0].Status, "failed")
+	}
+	if executor.Run.Steps[0].Error == "" {
+		t.Error("expected step error to be recorded")
 	}
 }
 

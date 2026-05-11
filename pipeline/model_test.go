@@ -125,6 +125,23 @@ func TestValidate_InvalidTimeout(t *testing.T) {
 	}
 }
 
+func TestValidate_NonPositiveTimeout(t *testing.T) {
+	p := &Pipeline{
+		Name:  "bad-timeout",
+		Steps: []Step{{Name: "a", Command: "echo a", Timeout: "0s"}},
+	}
+	errs := p.Validate()
+	found := false
+	for _, e := range errs {
+		if e.Field == "steps[0].timeout" && e.Message == "timeout must be greater than zero" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected non-positive timeout error")
+	}
+}
+
 func TestValidate_MissingDependency(t *testing.T) {
 	p := &Pipeline{
 		Name:  "bad-dep",

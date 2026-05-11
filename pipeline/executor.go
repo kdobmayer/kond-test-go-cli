@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,11 +102,28 @@ func (e *Executor) executeLevel(steps []Step) error {
 }
 
 // executeStep runs a single step
-// NOTE: timeout field is parsed but NOT enforced (intentional rough edge)
 func (e *Executor) executeStep(step Step) error {
 	e.updateStepStatus(step.Name, "running", 0, "")
 
 	startTime := time.Now()
+
+	// Build context with optional timeout
+	ctx := context.Background()
+	var cancel context.CancelFunc = func() {}
+	if step.Timeout != "" {
+		d, err := time.ParseDuration(step.Timeout)
+		if err != nil {
+			e.finishStep(step.Name, "failed", 1, startTime, time.Now(), "invalid timeout", err.Error())
+			return fmt.Errorf("step %q invalid timeout: %w", step.Name, err)
+		}
+		if d <= 0 {
+			timeoutErr := fmt.Errorf("timeout must be greater than zero")
+			e.finishStep(step.Name, "failed", 1, startTime, time.Now(), "invalid timeout", timeoutErr.Error())
+			return fmt.Errorf("step %q invalid timeout: %w", step.Name, timeoutErr)
+		}
+		ctx, cancel = context.WithTimeout(ctx, d)
+	}
+	defer cancel()
 
 	// Build environment
 	env := os.Environ()
@@ -115,17 +134,17 @@ func (e *Executor) executeStep(step Step) error {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	cmd := exec.Command("sh", "-c", step.Command)
-	cmd.Env = env
+	execCmd := exec.CommandContext(ctx, "sh", "-c", step.Command)
+	execCmd.Env = env
 	if step.WorkDir != "" {
-		cmd.Dir = step.WorkDir
+		execCmd.Dir = step.WorkDir
 	}
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	execCmd.Stdout = &stdout
+	execCmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err := execCmd.Run()
 
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
@@ -169,9 +188,34 @@ func (e *Executor) executeStep(step Step) error {
 	e.mu.Unlock()
 
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("step %q timed out after %s: %w", step.Name, step.Timeout, ctx.Err())
+		}
 		return fmt.Errorf("step %q failed: %w", step.Name, err)
 	}
 	return nil
+}
+
+func (e *Executor) finishStep(name, status string, exitCode int, startTime, endTime time.Time, summary, errMsg string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for i := range e.Run.Steps {
+		if e.Run.Steps[i].Name == name {
+			e.Run.Steps[i].Status = status
+			e.Run.Steps[i].ExitCode = exitCode
+			e.Run.Steps[i].StartTime = startTime
+			e.Run.Steps[i].EndTime = endTime
+			e.Run.Steps[i].Duration = endTime.Sub(startTime)
+			e.Run.Steps[i].Error = errMsg
+			if summary != "" {
+				e.Logs[name] = &StepLog{
+					StepName: name,
+					Stderr:   summary + ": " + errMsg,
+				}
+			}
+			break
+		}
+	}
 }
 
 // updateStepStatus updates the status of a step
