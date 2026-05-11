@@ -130,6 +130,25 @@ steps:
 	}
 }
 
+func TestVersionFlag(t *testing.T) {
+	t.Cleanup(func() { showVersion = false })
+
+	rootCmd.SetArgs([]string{"--version"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("--version error = %v", err)
+	}
+
+	out := buf.String()
+	for _, label := range []string{"version:", "commit:", "built:"} {
+		if !bytes.Contains([]byte(out), []byte(label)) {
+			t.Errorf("output missing %q, got: %s", label, out)
+		}
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {
