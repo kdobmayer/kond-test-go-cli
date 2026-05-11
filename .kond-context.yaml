@@ -1,0 +1,9 @@
+test: "go test -race -cover ./..."
+build: "go build -trimpath -o pipeline ."
+files:
+  - path: cmd/tail.go
+    why: "New file for the 'tail' subcommand definition and logic."
+  - path: cmd/root.go
+    why: "Modify to add 'tailCmd' to 'rootCmd' in its init() function."
+  - path: cmd/tail_test.go
+    why: "New file for unit tests for the 'tail' subcommand."
