@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,8 @@ type Executor struct {
 	Run      *PipelineRun
 	Logs     map[string]*StepLog
 	mu       sync.Mutex
+	Verbose  bool
+	Out      io.Writer
 }
 
 // NewExecutor creates a new pipeline executor
@@ -102,6 +105,9 @@ func (e *Executor) executeLevel(steps []Step) error {
 // executeStep runs a single step
 // NOTE: timeout field is parsed but NOT enforced (intentional rough edge)
 func (e *Executor) executeStep(step Step) error {
+	if err := e.writeVerboseStepStart(step.Name); err != nil {
+		return fmt.Errorf("writing verbose output for step %q: %w", step.Name, err)
+	}
 	e.updateStepStatus(step.Name, "running", 0, "")
 
 	startTime := time.Now()
@@ -170,6 +176,20 @@ func (e *Executor) executeStep(step Step) error {
 
 	if err != nil {
 		return fmt.Errorf("step %q failed: %w", step.Name, err)
+	}
+	return nil
+}
+
+func (e *Executor) writeVerboseStepStart(stepName string) error {
+	if !e.Verbose || e.Out == nil {
+		return nil
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if _, err := fmt.Fprintf(e.Out, "Running step: %s\n", stepName); err != nil {
+		return fmt.Errorf("writing step start line: %w", err)
 	}
 	return nil
 }
