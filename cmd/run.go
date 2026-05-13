@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
 	"github.com/kdobmayer/kond-test-go-cli/output"
@@ -22,11 +25,16 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running")
 	runCmd.Flags().Bool("verbose", false, "Show step output in real-time")
+	runCmd.Flags().IntP("timeout", "t", 0, "Cancel execution after N seconds (0 = no timeout)")
 }
 
 func runPipeline(cmd *cobra.Command, args []string) error {
 	pipelineFile := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	timeoutSecs, _ := cmd.Flags().GetInt("timeout")
+	if timeoutSecs < 0 {
+		return fmt.Errorf("invalid timeout %d: must be >= 0", timeoutSecs)
+	}
 
 	// Load pipeline
 	p, err := pipeline.LoadPipeline(pipelineFile)
@@ -71,11 +79,19 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating run directory: %w", err)
 	}
 
+	// Build execution context
+	ctx := context.Background()
+	if timeoutSecs > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
+		defer cancel()
+	}
+
 	// Execute
 	executor := pipeline.NewExecutor(p, cfg.RunDir)
 	fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
 
-	execErr := executor.Execute()
+	execErr := executor.Execute(ctx)
 
 	// Display results using output formatter
 	// NOTE: duplicated formatting logic (intentional rough edge — same pattern in status cmd)
@@ -99,6 +115,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	if execErr != nil {
+		if errors.Is(execErr, context.DeadlineExceeded) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "pipeline timed out after %d second(s)\n", timeoutSecs)
+		}
 		return fmt.Errorf("pipeline failed: %w", execErr)
 	}
 

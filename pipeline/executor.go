@@ -2,11 +2,14 @@ package pipeline
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -38,7 +41,11 @@ func NewExecutor(p *Pipeline, runDir string) *Executor {
 }
 
 // Execute runs the pipeline
-func (e *Executor) Execute() error {
+func (e *Executor) Execute(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	e.Run.Status = "running"
 	e.Run.StartTime = time.Now()
 
@@ -60,7 +67,7 @@ func (e *Executor) Execute() error {
 
 	// Execute each level in parallel
 	for _, level := range levels {
-		if err := e.executeLevel(level); err != nil {
+		if err := e.executeLevel(ctx, level); err != nil {
 			e.Run.Status = "failed"
 			e.Run.EndTime = time.Now()
 			e.saveRun()
@@ -75,7 +82,7 @@ func (e *Executor) Execute() error {
 }
 
 // executeLevel runs all steps in a level concurrently
-func (e *Executor) executeLevel(steps []Step) error {
+func (e *Executor) executeLevel(ctx context.Context, steps []Step) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(steps))
 
@@ -83,7 +90,7 @@ func (e *Executor) executeLevel(steps []Step) error {
 		wg.Add(1)
 		go func(s Step) {
 			defer wg.Done()
-			if err := e.executeStep(s); err != nil {
+			if err := e.executeStep(ctx, s); err != nil {
 				errCh <- err
 			}
 		}(step)
@@ -100,8 +107,7 @@ func (e *Executor) executeLevel(steps []Step) error {
 }
 
 // executeStep runs a single step
-// NOTE: timeout field is parsed but NOT enforced (intentional rough edge)
-func (e *Executor) executeStep(step Step) error {
+func (e *Executor) executeStep(ctx context.Context, step Step) error {
 	e.updateStepStatus(step.Name, "running", 0, "")
 
 	startTime := time.Now()
@@ -115,7 +121,20 @@ func (e *Executor) executeStep(step Step) error {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	cmd := exec.Command("sh", "-c", step.Command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", step.Command)
+	// Run in its own process group so cancellation kills the entire group
+	// (including child processes spawned by the shell), preventing pipe leaks.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		return err
+	}
 	cmd.Env = env
 	if step.WorkDir != "" {
 		cmd.Dir = step.WorkDir
@@ -169,6 +188,11 @@ func (e *Executor) executeStep(step Step) error {
 	e.mu.Unlock()
 
 	if err != nil {
+		// If the context fired (timeout or cancellation), surface that error so
+		// callers can detect it with errors.Is(err, context.DeadlineExceeded).
+		if ctx.Err() != nil {
+			return fmt.Errorf("step %q failed: %w", step.Name, ctx.Err())
+		}
 		return fmt.Errorf("step %q failed: %w", step.Name, err)
 	}
 	return nil
