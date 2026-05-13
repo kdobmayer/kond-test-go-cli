@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
+	"github.com/kdobmayer/kond-test-go-cli/output"
 	"github.com/kdobmayer/kond-test-go-cli/pipeline"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -98,11 +99,13 @@ func showAllRuns(cmd *cobra.Command, runDir string) error {
 		defer enc.Close()
 		return enc.Encode(summaries)
 	default:
+		formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
+		formatter.NoColor = noColor
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "RUN ID\tSTATUS")
 		fmt.Fprintln(w, "------\t------")
 		for _, s := range summaries {
-			fmt.Fprintf(w, "%s\t%s\n", s.RunID, s.Status)
+			fmt.Fprintf(w, "%s\t%s\n", s.RunID, formatter.ColorizeStatus(s.Status))
 		}
 		return w.Flush()
 	}
@@ -121,9 +124,11 @@ func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
 		defer enc.Close()
 		return enc.Encode(run)
 	default:
+		formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
+		formatter.NoColor = noColor
 		fmt.Fprintf(cmd.OutOrStdout(), "Pipeline: %s\n", run.PipelineName)
 		fmt.Fprintf(cmd.OutOrStdout(), "Run ID:   %s\n", run.RunID)
-		fmt.Fprintf(cmd.OutOrStdout(), "Status:   %s\n", run.Status)
+		fmt.Fprintf(cmd.OutOrStdout(), "Status:   %s\n", formatter.ColorizeStatus(run.Status))
 		fmt.Fprintf(cmd.OutOrStdout(), "Started:  %s\n", run.StartTime.Format("2006-01-02 15:04:05"))
 		if !run.EndTime.IsZero() {
 			fmt.Fprintf(cmd.OutOrStdout(), "Ended:    %s\n", run.EndTime.Format("2006-01-02 15:04:05"))
@@ -140,7 +145,7 @@ func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
 				errStr = errStr[:50] + "..."
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
-				s.Name, s.Status, s.Duration, s.ExitCode, errStr)
+				s.Name, formatter.ColorizeStatus(s.Status), s.Duration, s.ExitCode, errStr)
 		}
 		return w.Flush()
 	}
