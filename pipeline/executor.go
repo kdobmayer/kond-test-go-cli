@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,7 +24,7 @@ type Executor struct {
 
 // NewExecutor creates a new pipeline executor
 func NewExecutor(p *Pipeline, runDir string) *Executor {
-	runID := fmt.Sprintf("%s-%d", p.Name, time.Now().Unix())
+	runID := fmt.Sprintf("%s-%d", sanitizeRunIDComponent(p.Name), time.Now().Unix())
 	return &Executor{
 		Pipeline: p,
 		RunDir:   runDir,
@@ -63,14 +64,18 @@ func (e *Executor) Execute() error {
 		if err := e.executeLevel(level); err != nil {
 			e.Run.Status = "failed"
 			e.Run.EndTime = time.Now()
-			e.saveRun()
+			if saveErr := e.saveRun(); saveErr != nil {
+				return fmt.Errorf("saving failed run: %w", saveErr)
+			}
 			return err
 		}
 	}
 
 	e.Run.Status = "completed"
 	e.Run.EndTime = time.Now()
-	e.saveRun()
+	if err := e.saveRun(); err != nil {
+		return fmt.Errorf("saving completed run: %w", err)
+	}
 	return nil
 }
 
@@ -197,13 +202,19 @@ func (e *Executor) saveRun() error {
 		return nil
 	}
 
-	runDir := filepath.Join(e.RunDir, e.Run.RunID)
+	runDir, err := secureJoin(e.RunDir, e.Run.RunID)
+	if err != nil {
+		return fmt.Errorf("resolving run directory: %w", err)
+	}
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return fmt.Errorf("creating run directory: %w", err)
 	}
 
 	// Save run state
-	runPath := filepath.Join(runDir, "run.yaml")
+	runPath, err := secureJoin(runDir, "run.yaml")
+	if err != nil {
+		return fmt.Errorf("resolving run state path: %w", err)
+	}
 	data, err := MarshalYAML(e.Run)
 	if err != nil {
 		return fmt.Errorf("marshaling run state: %w", err)
@@ -213,12 +224,18 @@ func (e *Executor) saveRun() error {
 	}
 
 	// Save logs
+	logDir, err := secureJoin(runDir, "logs")
+	if err != nil {
+		return fmt.Errorf("resolving logs directory: %w", err)
+	}
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("creating logs directory: %w", err)
+	}
 	for name, log := range e.Logs {
-		logDir := filepath.Join(runDir, "logs")
-		if err := os.MkdirAll(logDir, 0755); err != nil {
-			return fmt.Errorf("creating logs directory: %w", err)
+		logPath, err := secureJoin(logDir, name+".yaml")
+		if err != nil {
+			return fmt.Errorf("resolving log path for step %q: %w", name, err)
 		}
-		logPath := filepath.Join(logDir, name+".yaml")
 		logData, err := MarshalYAML(log)
 		if err != nil {
 			return fmt.Errorf("marshaling log: %w", err)
@@ -238,7 +255,10 @@ func MarshalYAML(v interface{}) ([]byte, error) {
 
 // LoadRun reads a pipeline run from disk
 func LoadRun(runDir, runID string) (*PipelineRun, error) {
-	runPath := filepath.Join(runDir, runID, "run.yaml")
+	runPath, err := secureJoin(runDir, runID, "run.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("resolving run file: %w", err)
+	}
 	data, err := os.ReadFile(runPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading run file: %w", err)
@@ -252,7 +272,10 @@ func LoadRun(runDir, runID string) (*PipelineRun, error) {
 
 // LoadStepLog reads a step log from disk
 func LoadStepLog(runDir, runID, stepName string) (*StepLog, error) {
-	logPath := filepath.Join(runDir, runID, "logs", stepName+".yaml")
+	logPath, err := secureJoin(runDir, runID, "logs", stepName+".yaml")
+	if err != nil {
+		return nil, fmt.Errorf("resolving log file: %w", err)
+	}
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading log file: %w", err)
@@ -280,4 +303,30 @@ func ListRuns(runDir string) ([]string, error) {
 		}
 	}
 	return runs, nil
+}
+
+func sanitizeRunIDComponent(name string) string {
+	name = filepath.Base(name)
+	name = strings.ReplaceAll(name, string(filepath.Separator), "_")
+	if filepath.Separator != '/' {
+		name = strings.ReplaceAll(name, "/", "_")
+	}
+	if name == "." || name == "" {
+		return "pipeline"
+	}
+	return name
+}
+
+func secureJoin(base string, elems ...string) (string, error) {
+	baseClean := filepath.Clean(base)
+	parts := append([]string{baseClean}, elems...)
+	candidate := filepath.Clean(filepath.Join(parts...))
+	rel, err := filepath.Rel(baseClean, candidate)
+	if err != nil {
+		return "", fmt.Errorf("computing relative path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes base directory")
+	}
+	return candidate, nil
 }

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -99,20 +100,32 @@ func (p *Pipeline) Validate() []ValidationError {
 		})
 	}
 
-	stepNames := make(map[string]bool)
+	stepNames := make(map[string]bool, len(p.Steps))
+	for _, step := range p.Steps {
+		if step.Name != "" {
+			stepNames[step.Name] = true
+		}
+	}
+
+	seenStepNames := make(map[string]bool)
 	for i, step := range p.Steps {
 		if step.Name == "" {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("steps[%d].name", i),
 				Message: "step name is required",
 			})
-		} else if stepNames[step.Name] {
+		} else if seenStepNames[step.Name] {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("steps[%d].name", i),
 				Message: fmt.Sprintf("duplicate step name: %s", step.Name),
 			})
+		} else if containsPathSeparator(step.Name) {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("steps[%d].name", i),
+				Message: fmt.Sprintf("step name %q must not contain path separators", step.Name),
+			})
 		} else {
-			stepNames[step.Name] = true
+			seenStepNames[step.Name] = true
 		}
 
 		if step.Command == "" {
@@ -126,7 +139,7 @@ func (p *Pipeline) Validate() []ValidationError {
 			if !stepNames[dep] {
 				errs = append(errs, ValidationError{
 					Field:   fmt.Sprintf("steps[%d].depends_on", i),
-					Message: fmt.Sprintf("dependency %q not found or defined after this step", dep),
+					Message: fmt.Sprintf("dependency %q not found", dep),
 				})
 			}
 		}
@@ -147,6 +160,10 @@ func (p *Pipeline) Validate() []ValidationError {
 	}
 
 	return errs
+}
+
+func containsPathSeparator(name string) bool {
+	return name != filepath.Base(name)
 }
 
 // ValidationError represents a validation issue
