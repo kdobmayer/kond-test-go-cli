@@ -130,6 +130,26 @@ steps:
 	}
 }
 
+func TestVersionFlag(t *testing.T) {
+	prevVersion := Version
+	Version = "v1.2.3-test"
+	t.Cleanup(func() {
+		Version = prevVersion
+	})
+
+	rootCmd.SetArgs([]string{"--version"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := Execute(); err != nil {
+		t.Fatalf("--version error = %v", err)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte(Version)) {
+		t.Errorf("expected version string %q in output, got: %s", Version, buf.String())
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {
