@@ -130,6 +130,53 @@ steps:
 	}
 }
 
+func TestRunCommand_Timeout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	os.WriteFile(path, []byte(`
+name: timeout-test
+steps:
+  - name: slow
+    command: sleep 60
+`), 0644)
+
+	rootCmd.SetArgs([]string{"run", path, "--timeout", "2", "--dry-run=false"})
+	var out, errBuf bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&errBuf)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from timeout")
+	}
+	if !bytes.Contains(errBuf.Bytes(), []byte("timed out")) {
+		t.Errorf("expected 'timed out' in stderr, got: %s", errBuf.String())
+	}
+}
+
+func TestRunCommand_InvalidTimeout(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	os.WriteFile(path, []byte(`
+name: invalid-timeout
+steps:
+  - name: fast
+    command: echo ok
+`), 0644)
+
+	rootCmd.SetArgs([]string{"run", path, "--timeout", "-1"})
+	var errBuf bytes.Buffer
+	rootCmd.SetErr(&errBuf)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error from negative timeout")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("must be >= 0")) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {
