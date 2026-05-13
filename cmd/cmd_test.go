@@ -130,6 +130,57 @@ steps:
 	}
 }
 
+func TestRunCommand_Quiet(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(`
+name: quiet-test
+steps:
+  - name: a
+    command: echo hello
+`), 0644); err != nil {
+		t.Fatalf("write pipeline: %v", err)
+	}
+
+	rootCmd.SetArgs([]string{"run", path, "--quiet", "--dry-run=false"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("run --quiet error = %v", err)
+	}
+
+	if buf.Len() != 0 {
+		t.Errorf("expected empty stdout with --quiet, got: %q", buf.String())
+	}
+}
+
+func TestRunCommand_QuietFailureStillReportsErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(`
+name: quiet-fail-test
+steps:
+  - name: a
+    command: definitely-not-a-real-command-xyz
+`), 0644); err != nil {
+		t.Fatalf("write pipeline: %v", err)
+	}
+
+	rootCmd.SetArgs([]string{"run", path, "--quiet", "--dry-run=false"})
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected run --quiet to fail")
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("failed")) {
+		t.Errorf("expected failure details on stderr, got: %q", stderr.String())
+	}
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {
