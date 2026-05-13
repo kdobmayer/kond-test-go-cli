@@ -22,11 +22,16 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running")
 	runCmd.Flags().Bool("verbose", false, "Show step output in real-time")
+	runCmd.Flags().BoolP("quiet", "q", false, "Suppress non-error output")
 }
 
 func runPipeline(cmd *cobra.Command, args []string) error {
 	pipelineFile := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	quiet, err := cmd.Flags().GetBool("quiet")
+	if err != nil {
+		return fmt.Errorf("reading quiet flag: %w", err)
+	}
 
 	// Load pipeline
 	p, err := pipeline.LoadPipeline(pipelineFile)
@@ -50,11 +55,13 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		fmt.Fprintf(cmd.OutOrStdout(), "Execution plan for %q:\n\n", p.Name)
-		for i, level := range levels {
-			fmt.Fprintf(cmd.OutOrStdout(), "Level %d (parallel):\n", i+1)
-			for _, step := range level {
-				fmt.Fprintf(cmd.OutOrStdout(), "  - %s: %s\n", step.Name, step.Command)
+		if !quiet {
+			fmt.Fprintf(cmd.OutOrStdout(), "Execution plan for %q:\n\n", p.Name)
+			for i, level := range levels {
+				fmt.Fprintf(cmd.OutOrStdout(), "Level %d (parallel):\n", i+1)
+				for _, step := range level {
+					fmt.Fprintf(cmd.OutOrStdout(), "  - %s: %s\n", step.Name, step.Command)
+				}
 			}
 		}
 		return nil
@@ -73,35 +80,47 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 	// Execute
 	executor := pipeline.NewExecutor(p, cfg.RunDir)
-	fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
+	if !quiet {
+		fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
+	}
 
 	execErr := executor.Execute()
 
-	// Display results using output formatter
-	// NOTE: duplicated formatting logic (intentional rough edge — same pattern in status cmd)
-	formatter := output.NewFormatter(outputFormat, cmd.OutOrStdout())
-	headers := []string{"STEP", "STATUS", "DURATION", "EXIT CODE"}
-	var rows []output.TableRow
-	for _, s := range executor.Run.Steps {
-		rows = append(rows, output.TableRow{
-			Columns: []string{
-				s.Name,
-				s.Status,
-				s.Duration.String(),
-				fmt.Sprintf("%d", s.ExitCode),
-			},
-		})
-	}
+	if !quiet || execErr != nil {
+		// Display results using output formatter
+		// NOTE: duplicated formatting logic (intentional rough edge — same pattern in status cmd)
+		out := cmd.OutOrStdout()
+		if quiet && execErr != nil {
+			out = cmd.ErrOrStderr()
+		}
+		formatter := output.NewFormatter(outputFormat, out)
+		headers := []string{"STEP", "STATUS", "DURATION", "EXIT CODE"}
+		var rows []output.TableRow
+		for _, s := range executor.Run.Steps {
+			rows = append(rows, output.TableRow{
+				Columns: []string{
+					s.Name,
+					s.Status,
+					s.Duration.String(),
+					fmt.Sprintf("%d", s.ExitCode),
+				},
+			})
+		}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	if err := formatter.Render(headers, rows, executor.Run); err != nil {
-		return fmt.Errorf("rendering output: %w", err)
+		if !quiet {
+			fmt.Fprintln(out)
+		}
+		if err := formatter.Render(headers, rows, executor.Run); err != nil {
+			return fmt.Errorf("rendering output: %w", err)
+		}
 	}
 
 	if execErr != nil {
 		return fmt.Errorf("pipeline failed: %w", execErr)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\nPipeline %q completed successfully.\n", p.Name)
+	if !quiet {
+		fmt.Fprintf(cmd.OutOrStdout(), "\nPipeline %q completed successfully.\n", p.Name)
+	}
 	return nil
 }
