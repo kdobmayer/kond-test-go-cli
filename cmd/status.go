@@ -1,15 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
-	"text/tabwriter"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
+	"github.com/kdobmayer/kond-test-go-cli/output"
 	"github.com/kdobmayer/kond-test-go-cli/pipeline"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var statusCmd = &cobra.Command{
@@ -23,10 +21,17 @@ var statusCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	statusCmd.Flags().Bool("all", false, "Show all runs")
+	statusCmd.Flags().Bool("json", false, "Output in JSON format")
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	showAll, _ := cmd.Flags().GetBool("all")
+	useJSON, _ := cmd.Flags().GetBool("json")
+
+	format := outputFormat
+	if useJSON {
+		format = "json"
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -34,21 +39,19 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if showAll {
-		return showAllRuns(cmd, cfg.RunDir)
+		return showAllRuns(cmd, cfg.RunDir, format)
 	}
 
 	var runID string
 	if len(args) > 0 {
 		runID = args[0]
 	} else {
-		// Find latest run
 		runs, err := pipeline.ListRuns(cfg.RunDir)
 		if err != nil {
 			return fmt.Errorf("listing runs: %w", err)
 		}
 		if len(runs) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No pipeline runs found.")
-			return nil
+			return renderNoRuns(cmd, format, false)
 		}
 		sort.Strings(runs)
 		runID = runs[len(runs)-1]
@@ -59,17 +62,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading run: %w", err)
 	}
 
-	return renderRunStatus(cmd, run)
+	return renderRunStatus(cmd, run, format)
 }
 
-func showAllRuns(cmd *cobra.Command, runDir string) error {
+func showAllRuns(cmd *cobra.Command, runDir string, format string) error {
 	runs, err := pipeline.ListRuns(runDir)
 	if err != nil {
 		return fmt.Errorf("listing runs: %w", err)
 	}
 	if len(runs) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No pipeline runs found.")
-		return nil
+		return renderNoRuns(cmd, format, true)
 	}
 	sort.Strings(runs)
 
@@ -86,40 +88,48 @@ func showAllRuns(cmd *cobra.Command, runDir string) error {
 		summaries = append(summaries, runSummary{RunID: id, Status: run.Status})
 	}
 
-	// NOTE: duplicated output formatting (intentional rough edge — same pattern in run cmd)
-	switch outputFormat {
-	case "json":
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(summaries)
-	case "yaml":
-		enc := yaml.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent(2)
-		defer enc.Close()
-		return enc.Encode(summaries)
-	default:
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "RUN ID\tSTATUS")
-		fmt.Fprintln(w, "------\t------")
-		for _, s := range summaries {
-			fmt.Fprintf(w, "%s\t%s\n", s.RunID, s.Status)
+	headers := []string{"RUN ID", "STATUS"}
+	var rows []output.TableRow
+	for _, s := range summaries {
+		rows = append(rows, output.TableRow{Columns: []string{s.RunID, s.Status}})
+	}
+
+	formatter := output.NewFormatter(format, cmd.OutOrStdout())
+	return formatter.Render(headers, rows, summaries)
+}
+
+func renderNoRuns(cmd *cobra.Command, format string, all bool) error {
+	formatter := output.NewFormatter(format, cmd.OutOrStdout())
+	switch format {
+	case "json", "yaml":
+		if all {
+			return formatter.Render(nil, nil, []any{})
 		}
-		return w.Flush()
+		return formatter.Render(nil, nil, map[string]string{"message": "No pipeline runs found."})
+	default:
+		formatter.RenderMessage("No pipeline runs found.")
+		return nil
 	}
 }
 
-func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
-	// NOTE: duplicated output formatting (intentional rough edge)
-	switch outputFormat {
-	case "json":
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(run)
-	case "yaml":
-		enc := yaml.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent(2)
-		defer enc.Close()
-		return enc.Encode(run)
+func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun, format string) error {
+	formatter := output.NewFormatter(format, cmd.OutOrStdout())
+
+	headers := []string{"STEP", "STATUS", "DURATION", "EXIT CODE", "ERROR"}
+	var rows []output.TableRow
+	for _, s := range run.Steps {
+		errStr := s.Error
+		if len(errStr) > 50 {
+			errStr = errStr[:50] + "..."
+		}
+		rows = append(rows, output.TableRow{Columns: []string{
+			s.Name, s.Status, s.Duration.String(), fmt.Sprintf("%d", s.ExitCode), errStr,
+		}})
+	}
+
+	switch format {
+	case "json", "yaml":
+		return formatter.Render(headers, rows, run)
 	default:
 		fmt.Fprintf(cmd.OutOrStdout(), "Pipeline: %s\n", run.PipelineName)
 		fmt.Fprintf(cmd.OutOrStdout(), "Run ID:   %s\n", run.RunID)
@@ -130,18 +140,6 @@ func renderRunStatus(cmd *cobra.Command, run *pipeline.PipelineRun) error {
 			fmt.Fprintf(cmd.OutOrStdout(), "Duration: %s\n", run.EndTime.Sub(run.StartTime))
 		}
 		fmt.Fprintln(cmd.OutOrStdout())
-
-		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "STEP\tSTATUS\tDURATION\tEXIT CODE\tERROR")
-		fmt.Fprintln(w, "----\t------\t--------\t---------\t-----")
-		for _, s := range run.Steps {
-			errStr := s.Error
-			if len(errStr) > 50 {
-				errStr = errStr[:50] + "..."
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
-				s.Name, s.Status, s.Duration, s.ExitCode, errStr)
-		}
-		return w.Flush()
+		return formatter.Table(headers, rows)
 	}
 }

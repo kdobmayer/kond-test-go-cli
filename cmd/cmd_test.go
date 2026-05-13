@@ -7,6 +7,43 @@ import (
 	"testing"
 )
 
+func writeTestRun(t *testing.T, runDir string) string {
+	t.Helper()
+	runID := "run-20240101-120000"
+	runPath := filepath.Join(runDir, runID)
+	if err := os.MkdirAll(runPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runData := `pipeline_name: test-pipeline
+run_id: run-20240101-120000
+status: success
+start_time: 2024-01-01T12:00:00Z
+end_time: 2024-01-01T12:00:05Z
+steps:
+  - name: step-a
+    status: success
+    exit_code: 0
+    start_time: 2024-01-01T12:00:00Z
+    end_time: 2024-01-01T12:00:05Z
+    duration: 5s
+`
+	if err := os.WriteFile(filepath.Join(runPath, "run.yaml"), []byte(runData), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return runID
+}
+
+func resetStatusCommandState(t *testing.T) {
+	t.Helper()
+	outputFormat = "table"
+	if err := statusCmd.Flags().Set("all", "false"); err != nil {
+		t.Fatalf("reset all flag: %v", err)
+	}
+	if err := statusCmd.Flags().Set("json", "false"); err != nil {
+		t.Fatalf("reset json flag: %v", err)
+	}
+}
+
 func TestInitCommand(t *testing.T) {
 	dir := t.TempDir()
 
@@ -127,6 +164,97 @@ steps:
 	out := buf.String()
 	if !bytes.Contains([]byte(out), []byte("Level")) {
 		t.Error("expected execution plan output")
+	}
+}
+
+func TestStatusCommand_DefaultTable(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	resetStatusCommandState(t)
+	runDir := filepath.Join(dir, ".pipeline", "runs")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestRun(t, runDir)
+
+	rootCmd.SetArgs([]string{"status"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("status error = %v", err)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte("STEP")) {
+		t.Errorf("expected table headers in output, got: %s", buf.String())
+	}
+}
+
+func TestStatusCommand_JSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	resetStatusCommandState(t)
+	runDir := filepath.Join(dir, ".pipeline", "runs")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestRun(t, runDir)
+
+	rootCmd.SetArgs([]string{"status", "--json"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("status --json error = %v", err)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte(`"run_id"`)) {
+		t.Errorf("expected JSON with run_id, got: %s", buf.String())
+	}
+}
+
+func TestStatusCommand_AllJSON(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	resetStatusCommandState(t)
+	runDir := filepath.Join(dir, ".pipeline", "runs")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestRun(t, runDir)
+
+	rootCmd.SetArgs([]string{"status", "--all", "--json"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("status --all --json error = %v", err)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte(`"run_id"`)) {
+		t.Errorf("expected JSON array with run_id, got: %s", buf.String())
+	}
+}
+
+func TestStatusCommand_JSONNoRuns(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	resetStatusCommandState(t)
+
+	rootCmd.SetArgs([]string{"status", "--json"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("status --json error = %v", err)
+	}
+
+	if !bytes.Contains(buf.Bytes(), []byte(`"message"`)) {
+		t.Errorf("expected JSON message when no runs exist, got: %s", buf.String())
 	}
 }
 
