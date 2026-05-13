@@ -137,3 +137,24 @@ func TestFormatter_RenderError(t *testing.T) {
 		t.Error("RenderError should output the error")
 	}
 }
+
+func TestFormatter_ColorizeStatus(t *testing.T) {
+	var buf bytes.Buffer
+	f := NewFormatter("table", &buf)
+
+	got := f.ColorizeStatus("completed")
+	if !strings.Contains(got, "\033[32mcompleted\033[0m") {
+		t.Errorf("ColorizeStatus() = %q, expected green ANSI output", got)
+	}
+}
+
+func TestFormatter_ColorizeStatus_NoColor(t *testing.T) {
+	var buf bytes.Buffer
+	f := NewFormatter("table", &buf)
+	f.NoColor = true
+
+	got := f.ColorizeStatus("failed")
+	if got != "failed" {
+		t.Errorf("ColorizeStatus() = %q, want %q when NoColor is set", got, "failed")
+	}
+}

@@ -6,6 +6,7 @@ import (
 
 var (
 	outputFormat string
+	noColor      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -17,6 +18,7 @@ multi-step pipelines with dependency management and parallel execution.`,
 
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table, json, yaml")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output")
 }
 
 func Execute() error {

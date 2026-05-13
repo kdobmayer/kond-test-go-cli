@@ -12,8 +12,9 @@ import (
 
 // Formatter handles output formatting
 type Formatter struct {
-	Format string
-	Writer io.Writer
+	Format  string
+	Writer  io.Writer
+	NoColor bool
 }
 
 // NewFormatter creates a new formatter
@@ -24,6 +25,34 @@ func NewFormatter(format string, w io.Writer) *Formatter {
 // TableRow represents a row in table output
 type TableRow struct {
 	Columns []string
+}
+
+const (
+	ansiReset  = "\033[0m"
+	ansiRed    = "\033[31m"
+	ansiGreen  = "\033[32m"
+	ansiYellow = "\033[33m"
+	ansiBlue   = "\033[34m"
+)
+
+// ColorizeStatus colors step and run statuses for table-oriented output.
+func (f *Formatter) ColorizeStatus(status string) string {
+	if f.NoColor {
+		return status
+	}
+
+	switch strings.ToLower(status) {
+	case "completed", "success":
+		return ansiGreen + status + ansiReset
+	case "failed", "error":
+		return ansiRed + status + ansiReset
+	case "running":
+		return ansiBlue + status + ansiReset
+	case "pending", "skipped":
+		return ansiYellow + status + ansiReset
+	default:
+		return status
+	}
 }
 
 // Table outputs data as a formatted table
