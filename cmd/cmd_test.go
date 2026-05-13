@@ -130,6 +130,60 @@ steps:
 	}
 }
 
+func TestRunCommand_Verbose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(`name: verbose-test
+steps:
+  - name: step-1
+    command: echo ok
+`), 0644); err != nil {
+		t.Fatalf("write pipeline file: %v", err)
+	}
+
+	t.Run("with verbose", func(t *testing.T) {
+		// Reset flags that may carry over from prior test runs.
+		if err := runCmd.Flags().Set("dry-run", "false"); err != nil {
+			t.Fatalf("reset dry-run flag: %v", err)
+		}
+		if err := runCmd.Flags().Set("verbose", "false"); err != nil {
+			t.Fatalf("reset verbose flag: %v", err)
+		}
+		rootCmd.SetArgs([]string{"run", path, "--verbose"})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("run --verbose error = %v", err)
+		}
+
+		if !bytes.Contains(buf.Bytes(), []byte("Running step: step-1")) {
+			t.Error("expected step name line in verbose output")
+		}
+	})
+
+	t.Run("without verbose", func(t *testing.T) {
+		// Reset flags that may carry over from prior test runs.
+		if err := runCmd.Flags().Set("dry-run", "false"); err != nil {
+			t.Fatalf("reset dry-run flag: %v", err)
+		}
+		if err := runCmd.Flags().Set("verbose", "false"); err != nil {
+			t.Fatalf("reset verbose flag: %v", err)
+		}
+		rootCmd.SetArgs([]string{"run", path})
+		var buf bytes.Buffer
+		rootCmd.SetOut(&buf)
+
+		if err := rootCmd.Execute(); err != nil {
+			t.Fatalf("run error = %v", err)
+		}
+
+		if bytes.Contains(buf.Bytes(), []byte("Running step:")) {
+			t.Error("expected no step-name line without --verbose")
+		}
+	})
+}
+
 func TestGenerateTemplateSteps(t *testing.T) {
 	steps := generateTemplateSteps(3)
 	if len(steps) != 3 {

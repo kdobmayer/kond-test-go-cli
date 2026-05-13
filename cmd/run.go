@@ -26,7 +26,10 @@ func init() {
 
 func runPipeline(cmd *cobra.Command, args []string) error {
 	pipelineFile := args[0]
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	dryRun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return fmt.Errorf("reading dry-run flag: %w", err)
+	}
 
 	// Load pipeline
 	p, err := pipeline.LoadPipeline(pipelineFile)
@@ -73,6 +76,12 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 	// Execute
 	executor := pipeline.NewExecutor(p, cfg.RunDir)
+	verbose, err := cmd.Flags().GetBool("verbose")
+	if err != nil {
+		return fmt.Errorf("reading verbose flag: %w", err)
+	}
+	executor.Verbose = verbose
+	executor.Out = cmd.OutOrStdout()
 	fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
 
 	execErr := executor.Execute()
