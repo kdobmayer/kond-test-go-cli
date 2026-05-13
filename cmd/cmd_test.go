@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/kdobmayer/kond-test-go-cli/pipeline"
 )
 
 func TestInitCommand(t *testing.T) {
@@ -143,5 +146,96 @@ func TestGenerateTemplateSteps(t *testing.T) {
 	}
 	if len(steps[2].DependsOn) != 1 || steps[2].DependsOn[0] != "step-2" {
 		t.Error("step-3 should depend on step-2")
+	}
+}
+
+func TestVersionFlag_PrintsVersionOnly(t *testing.T) {
+	oldVersion := Version
+	Version = "1.2.3-test"
+	t.Cleanup(func() {
+		Version = oldVersion
+	})
+
+	rootCmd.SetArgs([]string{"--version"})
+	var out bytes.Buffer
+	var errBuf bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&errBuf)
+
+	if err := Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got := out.String(); got != "1.2.3-test\n" {
+		t.Fatalf("version output = %q, want %q", got, "1.2.3-test\n")
+	}
+	if errBuf.Len() != 0 {
+		t.Fatalf("unexpected stderr output: %q", errBuf.String())
+	}
+}
+
+func TestStatusWithoutRunID_UsesLatestStartTime(t *testing.T) {
+	runDir := t.TempDir()
+	cfgDir := t.TempDir()
+	t.Setenv("HOME", cfgDir)
+
+	cfg := `run_dir: ` + runDir + "\n"
+	if err := os.MkdirAll(filepath.Join(cfgDir, ".pipeline"), 0755); err != nil {
+		t.Fatalf("creating config directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, ".pipeline", "config.yaml"), []byte(cfg), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	older := &pipeline.PipelineRun{
+		PipelineName: "zeta",
+		RunID:        "zeta-older",
+		Status:       "completed",
+		StartTime:    mustParseTime(t, "2024-01-01T00:00:00Z"),
+	}
+	newer := &pipeline.PipelineRun{
+		PipelineName: "alpha",
+		RunID:        "alpha-newer",
+		Status:       "completed",
+		StartTime:    mustParseTime(t, "2024-01-02T00:00:00Z"),
+	}
+	writeRunFixture(t, runDir, older)
+	writeRunFixture(t, runDir, newer)
+
+	rootCmd.SetArgs([]string{"status"})
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&out)
+
+	if err := Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !bytes.Contains(out.Bytes(), []byte("Run ID:   alpha-newer")) {
+		t.Fatalf("expected latest run in output, got %q", out.String())
+	}
+}
+
+func mustParseTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		t.Fatalf("parsing time %q: %v", value, err)
+	}
+	return parsed
+}
+
+func writeRunFixture(t *testing.T, runDir string, run *pipeline.PipelineRun) {
+	t.Helper()
+	path := filepath.Join(runDir, run.RunID)
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatalf("creating run fixture dir: %v", err)
+	}
+	data, err := pipeline.MarshalYAML(run)
+	if err != nil {
+		t.Fatalf("marshaling run fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "run.yaml"), data, 0644); err != nil {
+		t.Fatalf("writing run fixture: %v", err)
 	}
 }

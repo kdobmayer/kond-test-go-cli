@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"text/tabwriter"
 
 	"github.com/kdobmayer/kond-test-go-cli/config"
@@ -41,17 +40,15 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		runID = args[0]
 	} else {
-		// Find latest run
-		runs, err := pipeline.ListRuns(cfg.RunDir)
+		var err error
+		runID, err = findLatestRunID(cfg.RunDir)
 		if err != nil {
-			return fmt.Errorf("listing runs: %w", err)
+			return fmt.Errorf("finding latest run: %w", err)
 		}
-		if len(runs) == 0 {
+		if runID == "" {
 			fmt.Fprintln(cmd.OutOrStdout(), "No pipeline runs found.")
 			return nil
 		}
-		sort.Strings(runs)
-		runID = runs[len(runs)-1]
 	}
 
 	run, err := pipeline.LoadRun(cfg.RunDir, runID)
@@ -71,7 +68,6 @@ func showAllRuns(cmd *cobra.Command, runDir string) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "No pipeline runs found.")
 		return nil
 	}
-	sort.Strings(runs)
 
 	type runSummary struct {
 		RunID  string `json:"run_id" yaml:"run_id"`

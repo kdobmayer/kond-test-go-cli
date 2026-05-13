@@ -136,6 +136,35 @@ func TestValidate_MissingDependency(t *testing.T) {
 	}
 }
 
+func TestValidate_ForwardDependencyAllowed(t *testing.T) {
+	p := &Pipeline{
+		Name: "forward-dep",
+		Steps: []Step{
+			{Name: "a", Command: "echo a", DependsOn: []string{"b"}},
+			{Name: "b", Command: "echo b"},
+		},
+	}
+
+	errs := p.Validate()
+	if len(errs) != 0 {
+		t.Fatalf("Validate() returned %d errors, want 0: %v", len(errs), errs)
+	}
+}
+
+func TestValidate_StepNameWithPathSeparator(t *testing.T) {
+	p := &Pipeline{
+		Name: "bad-step-name",
+		Steps: []Step{
+			{Name: "../escape", Command: "echo nope"},
+		},
+	}
+
+	errs := p.Validate()
+	if len(errs) == 0 {
+		t.Fatal("expected validation error for unsafe step name")
+	}
+}
+
 func TestValidate_CircularDependency(t *testing.T) {
 	p := &Pipeline{
 		Name: "circular",
@@ -260,6 +289,22 @@ func TestLoadStepLog_NotFound(t *testing.T) {
 	_, err := LoadStepLog("/nonexistent", "run-1", "step-1")
 	if err == nil {
 		t.Error("expected error for nonexistent log")
+	}
+}
+
+func TestLoadRun_PathTraversalRejected(t *testing.T) {
+	dir := t.TempDir()
+	_, err := LoadRun(dir, "../escape")
+	if err == nil {
+		t.Fatal("expected path traversal error")
+	}
+}
+
+func TestLoadStepLog_PathTraversalRejected(t *testing.T) {
+	dir := t.TempDir()
+	_, err := LoadStepLog(dir, "run-1", "../escape")
+	if err == nil {
+		t.Fatal("expected path traversal error")
 	}
 }
 

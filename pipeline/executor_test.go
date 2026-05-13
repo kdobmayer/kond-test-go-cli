@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -209,5 +210,13 @@ func TestNewExecutor_RunID(t *testing.T) {
 	}
 	if e.Run.Status != "pending" {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
+	}
+}
+
+func TestNewExecutor_RunIDSanitizesPipelineName(t *testing.T) {
+	p := &Pipeline{Name: "../test-id"}
+	e := NewExecutor(p, "")
+	if strings.Contains(e.Run.RunID, "..") || strings.Contains(e.Run.RunID, "/") {
+		t.Fatalf("unsafe run ID generated: %q", e.Run.RunID)
 	}
 }
