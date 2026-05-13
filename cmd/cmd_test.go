@@ -128,6 +128,36 @@ steps:
 	if !bytes.Contains([]byte(out), []byte("Level")) {
 		t.Error("expected execution plan output")
 	}
+	if !bytes.Contains([]byte(out), []byte("parallel")) {
+		t.Error("expected dry-run output to reflect parallel execution by default")
+	}
+}
+
+func TestRunCommand_DryRunSequential(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pipeline.yaml")
+	os.WriteFile(path, []byte(`
+name: seq-dry-run-test
+steps:
+  - name: a
+    command: echo hello
+  - name: b
+    command: echo world
+`), 0644)
+
+	rootCmd.SetArgs([]string{"run", path, "--dry-run", "--parallel=false"})
+	var buf bytes.Buffer
+	rootCmd.SetOut(&buf)
+	rootCmd.SetErr(&buf)
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("run --dry-run --parallel=false error = %v", err)
+	}
+
+	out := buf.String()
+	if !bytes.Contains([]byte(out), []byte("sequential")) {
+		t.Error("expected dry-run output to reflect sequential execution")
+	}
 }
 
 func TestGenerateTemplateSteps(t *testing.T) {
