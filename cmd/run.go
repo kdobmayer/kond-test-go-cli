@@ -22,11 +22,19 @@ func init() {
 	rootCmd.AddCommand(runCmd)
 	runCmd.Flags().Bool("dry-run", false, "Show execution plan without running")
 	runCmd.Flags().Bool("verbose", false, "Show step output in real-time")
+	runCmd.Flags().Bool("parallel", true, "Run independent steps concurrently within each level")
 }
 
 func runPipeline(cmd *cobra.Command, args []string) error {
 	pipelineFile := args[0]
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	dryRun, err := cmd.Flags().GetBool("dry-run")
+	if err != nil {
+		return fmt.Errorf("reading dry-run flag: %w", err)
+	}
+	parallel, err := cmd.Flags().GetBool("parallel")
+	if err != nil {
+		return fmt.Errorf("reading parallel flag: %w", err)
+	}
 
 	// Load pipeline
 	p, err := pipeline.LoadPipeline(pipelineFile)
@@ -50,9 +58,13 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
+		mode := "sequential"
+		if parallel {
+			mode = "parallel"
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Execution plan for %q:\n\n", p.Name)
 		for i, level := range levels {
-			fmt.Fprintf(cmd.OutOrStdout(), "Level %d (parallel):\n", i+1)
+			fmt.Fprintf(cmd.OutOrStdout(), "Level %d (%s):\n", i+1, mode)
 			for _, step := range level {
 				fmt.Fprintf(cmd.OutOrStdout(), "  - %s: %s\n", step.Name, step.Command)
 			}
@@ -72,7 +84,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute
-	executor := pipeline.NewExecutor(p, cfg.RunDir)
+	executor := pipeline.NewExecutor(p, cfg.RunDir, parallel)
 	fmt.Fprintf(cmd.OutOrStdout(), "Running pipeline %q (run: %s)...\n", p.Name, executor.Run.RunID)
 
 	execErr := executor.Execute()

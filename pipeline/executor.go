@@ -18,15 +18,17 @@ type Executor struct {
 	RunDir   string
 	Run      *PipelineRun
 	Logs     map[string]*StepLog
+	Parallel bool
 	mu       sync.Mutex
 }
 
 // NewExecutor creates a new pipeline executor
-func NewExecutor(p *Pipeline, runDir string) *Executor {
+func NewExecutor(p *Pipeline, runDir string, parallel bool) *Executor {
 	runID := fmt.Sprintf("%s-%d", p.Name, time.Now().Unix())
 	return &Executor{
 		Pipeline: p,
 		RunDir:   runDir,
+		Parallel: parallel,
 		Run: &PipelineRun{
 			PipelineName: p.Name,
 			RunID:        runID,
@@ -74,8 +76,17 @@ func (e *Executor) Execute() error {
 	return nil
 }
 
-// executeLevel runs all steps in a level concurrently
+// executeLevel runs all steps in a level, concurrently or sequentially based on e.Parallel
 func (e *Executor) executeLevel(steps []Step) error {
+	if !e.Parallel {
+		for _, step := range steps {
+			if err := e.executeStep(step); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(steps))
 

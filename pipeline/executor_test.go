@@ -13,7 +13,7 @@ func TestExecutor_SimpleSuccess(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	executor := NewExecutor(p, dir)
+	executor := NewExecutor(p, dir, true)
 
 	if err := executor.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -50,7 +50,7 @@ func TestExecutor_StepFailure(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	executor := NewExecutor(p, dir)
+	executor := NewExecutor(p, dir, true)
 
 	err := executor.Execute()
 	if err == nil {
@@ -76,7 +76,7 @@ func TestExecutor_MultipleSteps(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	executor := NewExecutor(p, dir)
+	executor := NewExecutor(p, dir, true)
 
 	if err := executor.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -100,7 +100,7 @@ func TestExecutor_ParallelSteps(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	executor := NewExecutor(p, dir)
+	executor := NewExecutor(p, dir, true)
 
 	if err := executor.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -125,7 +125,7 @@ func TestExecutor_Environment(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	executor := NewExecutor(p, dir)
+	executor := NewExecutor(p, dir, true)
 
 	if err := executor.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -143,7 +143,7 @@ func TestExecutor_SaveRun(t *testing.T) {
 		Steps: []Step{{Name: "a", Command: "echo saved"}},
 	}
 	dir := t.TempDir()
-	executor := NewExecutor(p, dir)
+	executor := NewExecutor(p, dir, true)
 	if err := executor.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -173,7 +173,7 @@ func TestExecutor_EmptyRunDir(t *testing.T) {
 		},
 	}
 
-	executor := NewExecutor(p, "")
+	executor := NewExecutor(p, "", true)
 	if err := executor.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -189,7 +189,7 @@ func TestExecutor_StepWithStderr(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	executor := NewExecutor(p, dir)
+	executor := NewExecutor(p, dir, true)
 
 	if err := executor.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -203,11 +203,60 @@ func TestExecutor_StepWithStderr(t *testing.T) {
 
 func TestNewExecutor_RunID(t *testing.T) {
 	p := &Pipeline{Name: "test-id"}
-	e := NewExecutor(p, "")
+	e := NewExecutor(p, "", true)
 	if e.Run.RunID == "" {
 		t.Error("expected non-empty RunID")
 	}
 	if e.Run.Status != "pending" {
 		t.Errorf("initial status = %q, want %q", e.Run.Status, "pending")
+	}
+}
+
+func TestExecutor_ParallelFlag(t *testing.T) {
+	p := &Pipeline{
+		Name: "parallel-flag",
+		Steps: []Step{
+			{Name: "x", Command: "echo x"},
+			{Name: "y", Command: "echo y"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir, true)
+
+	if !executor.Parallel {
+		t.Error("expected Parallel = true")
+	}
+	if err := executor.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if executor.Run.Status != "completed" {
+		t.Errorf("Run.Status = %q, want %q", executor.Run.Status, "completed")
+	}
+	for _, s := range executor.Run.Steps {
+		if s.Status != "completed" {
+			t.Errorf("step %q status = %q, want completed", s.Name, s.Status)
+		}
+	}
+}
+
+func TestExecutor_SequentialStopsOnFirstError(t *testing.T) {
+	p := &Pipeline{
+		Name: "seq-error",
+		Steps: []Step{
+			{Name: "fail", Command: "exit 1"},
+			{Name: "after", Command: "echo after"},
+		},
+	}
+
+	dir := t.TempDir()
+	executor := NewExecutor(p, dir, false)
+
+	err := executor.Execute()
+	if err == nil {
+		t.Fatal("Execute() expected error")
+	}
+	if executor.Run.Status != "failed" {
+		t.Errorf("Run.Status = %q, want failed", executor.Run.Status)
 	}
 }
